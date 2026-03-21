@@ -10,6 +10,7 @@ import (
 	"github.com/hulipa487/catgirl/internal/config"
 	"github.com/hulipa487/catgirl/internal/models"
 	"github.com/hulipa487/catgirl/internal/repository"
+	"github.com/hulipa487/catgirl/internal/services/llm"
 	"github.com/hulipa487/catgirl/internal/services/task"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -33,17 +34,13 @@ type WorkerAgent struct {
 	LastActive  *time.Time
 	mu          sync.Mutex
 
-	repo     *repository.Repository
-	taskSvc  *task.TaskService
-	config   *config.Config
-	logger   zerolog.Logger
-	memory   *WorkingMemoryService
-	ltm      *LongTermMemoryService
-	container *ContainerService
-	mcp      *MCPService
-	skill    *SkillService
-	llm      *LLMService
-	billing  *BillingService
+	repo    *repository.Repository
+	taskSvc *task.TaskService
+	config  *config.Config
+	logger  zerolog.Logger
+	memory  *WorkingMemoryService
+	ltm     *LongTermMemoryService
+	billing *BillingService
 
 	stopCh chan struct{}
 }
@@ -285,15 +282,15 @@ func (s *WorkingMemoryService) GetAll(ctx context.Context) ([]*models.WorkingMem
 type LongTermMemoryService struct {
 	repo      *repository.Repository
 	sessionID uuid.UUID
-	llm       *LLMService
+	llm       *llm.LLMService
 	cfg       *config.Config
 }
 
-func NewLongTermMemoryService(repo *repository.Repository, sessionID uuid.UUID, llm *LLMService, cfg *config.Config) *LongTermMemoryService {
+func NewLongTermMemoryService(repo *repository.Repository, sessionID uuid.UUID, llmSvc *llm.LLMService, cfg *config.Config) *LongTermMemoryService {
 	return &LongTermMemoryService{
 		repo:      repo,
 		sessionID: sessionID,
-		llm:       llm,
+		llm:       llmSvc,
 		cfg:       cfg,
 	}
 }
@@ -391,8 +388,8 @@ func getCostMultiplier(membership string) float64 {
 	}
 }
 
-func SetAgentServices(agent *WorkerAgent, repo *repository.Repository, sessionID uuid.UUID, llm *LLMService, cfg *config.Config) {
+func SetAgentServices(agent *WorkerAgent, repo *repository.Repository, sessionID uuid.UUID, llmSvc *llm.LLMService, cfg *config.Config) {
 	agent.memory = NewWorkingMemoryService(repo, agent.ID)
-	agent.ltm = NewLongTermMemoryService(repo, sessionID, llm, cfg)
+	agent.ltm = NewLongTermMemoryService(repo, sessionID, llmSvc, cfg)
 	agent.billing = NewBillingService(repo, sessionID, "")
 }
