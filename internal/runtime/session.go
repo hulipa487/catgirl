@@ -151,6 +151,25 @@ func (s *SessionService) GetSession(ctx context.Context, sessionID uuid.UUID) (*
 	return sess, nil
 }
 
+func (s *SessionService) GetSessionIDByTelegramUser(ctx context.Context, telegramUserID int64) (interface{}, error) {
+	session, err := s.GetSessionByTelegramUser(ctx, telegramUserID)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return nil, nil
+	}
+	return session.ID, nil
+}
+
+func (s *SessionService) CreateSessionForTelegramUser(ctx context.Context, telegramUserID int64, username, firstName, lastName string) (interface{}, error) {
+	session, err := s.CreateSession(ctx, telegramUserID, username, firstName, lastName)
+	if err != nil {
+		return nil, err
+	}
+	return session.ID, nil
+}
+
 func (s *SessionService) GetSessionByTelegramUser(ctx context.Context, telegramUserID int64) (*Session, error) {
 	s.mu.RLock()
 	for _, session := range s.sessions {

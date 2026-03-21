@@ -19,8 +19,8 @@ type TelegramService struct {
 }
 
 type TelegramSessionService interface {
-	GetSessionByTelegramUser(ctx context.Context, telegramUserID int64) (*TelegramSession, error)
-	CreateSession(ctx context.Context, telegramUserID int64, username, firstName, lastName string) (*TelegramSession, error)
+	GetSessionIDByTelegramUser(ctx context.Context, telegramUserID int64) (interface{}, error)
+	CreateSessionForTelegramUser(ctx context.Context, telegramUserID int64, username, firstName, lastName string) (interface{}, error)
 }
 
 type TelegramSession struct {
@@ -104,14 +104,14 @@ func (s *TelegramService) handleMessage(msg *tgbotapi.Message) error {
 		return s.sendReply(msg, "You are not allowed to use this bot.")
 	}
 
-	session, err := s.sessionSvc.GetSessionByTelegramUser(ctx, msg.From.ID)
+	sessionID, err := s.sessionSvc.GetSessionIDByTelegramUser(ctx, msg.From.ID)
 	if err != nil {
 		s.logger.Error().Err(err).Int64("user_id", msg.From.ID).Msg("failed to get session")
 		return s.sendReply(msg, "An error occurred. Please try again later.")
 	}
 
-	if session == nil {
-		session, err = s.sessionSvc.CreateSession(ctx, msg.From.ID,
+	if sessionID == nil {
+		sessionID, err = s.sessionSvc.CreateSessionForTelegramUser(ctx, msg.From.ID,
 			ptrToString(msg.From.UserName),
 			ptrToString(msg.From.FirstName),
 			ptrToString(msg.From.LastName))
@@ -124,7 +124,7 @@ func (s *TelegramService) handleMessage(msg *tgbotapi.Message) error {
 	userMessage := msg.Text
 
 	s.logger.Info().
-		Str("session_id", fmt.Sprintf("%v", session.ID)).
+		Str("session_id", fmt.Sprintf("%v", sessionID)).
 		Str("message", truncate(userMessage, 100)).
 		Msg("user message received")
 
