@@ -10,6 +10,7 @@ import (
 	"github.com/hulipa487/catgirl/internal/config"
 	"github.com/hulipa487/catgirl/internal/models"
 	"github.com/hulipa487/catgirl/internal/repository"
+	"github.com/hulipa487/catgirl/internal/services/llm"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
