@@ -103,6 +103,10 @@ func (rc *RuntimeCoordinator) initializeServices() error {
 	}
 	rc.telegramSvc = telegramSvc
 
+	rc.sessionSvc.OnReply = func(telegramUserID int64, message string) {
+		rc.telegramSvc.SendMessage(telegramUserID, message)
+	}
+
 	return nil
 }
 

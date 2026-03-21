@@ -21,6 +21,7 @@ type TelegramService struct {
 type TelegramSessionService interface {
 	GetSessionIDByTelegramUser(ctx context.Context, telegramUserID int64) (interface{}, error)
 	CreateSessionForTelegramUser(ctx context.Context, telegramUserID int64, username, firstName, lastName string) (interface{}, error)
+	HandleUserMessage(ctx context.Context, sessionID interface{}, telegramUserID int64, message string) error
 }
 
 type TelegramSession struct {
@@ -128,7 +129,12 @@ func (s *TelegramService) handleMessage(msg *tgbotapi.Message) error {
 		Str("message", truncate(userMessage, 100)).
 		Msg("user message received")
 
-	return s.sendReply(msg, fmt.Sprintf("Message received: %s", userMessage))
+	if err := s.sessionSvc.HandleUserMessage(ctx, sessionID, msg.From.ID, userMessage); err != nil {
+		s.logger.Error().Err(err).Str("session_id", fmt.Sprintf("%v", sessionID)).Msg("failed to handle user message")
+		return s.sendReply(msg, "Sorry, I couldn't process your message.")
+	}
+
+	return nil
 }
 
 func (s *TelegramService) handleStartCommand(msg *tgbotapi.Message) error {
