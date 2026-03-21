@@ -25,7 +25,6 @@ type SessionService struct {
 type Session struct {
 	ID         uuid.UUID
 	TelegramUserID int64
-	Orchestrator *MainOrchestrator
 	State      *OrchestratorState
 	LTM        *LongTermMemoryManager
 	History    *ConversationHistoryManager
@@ -45,6 +44,7 @@ type LongTermMemoryManager struct {
 	sessionID uuid.UUID
 	repo     *repository.Repository
 	cfg      *config.Config
+	logger   zerolog.Logger
 }
 
 type ConversationHistoryManager struct {
@@ -228,11 +228,12 @@ func (s *SessionService) GetConversationHistory(ctx context.Context, sessionID u
 	return s.repo.GetConversationHistory(ctx, sessionID, limit, offset)
 }
 
-func NewLongTermMemoryManager(sessionID uuid.UUID, repo *repository.Repository, cfg *config.Config) *LongTermMemoryManager {
+func NewLongTermMemoryManager(sessionID uuid.UUID, repo *repository.Repository, cfg *config.Config, logger zerolog.Logger) *LongTermMemoryManager {
 	return &LongTermMemoryManager{
 		sessionID: sessionID,
 		repo:      repo,
 		cfg:       cfg,
+		logger:    logger,
 	}
 }
 
@@ -272,19 +273,11 @@ func (m *LongTermMemoryManager) ConsolidateMemories(ctx context.Context) error {
 }
 
 func (m *LongTermMemoryManager) generateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	return make([]float32, m.cfg.RAG.EmbeddingDims), nil
+	return make([]float32, m.cfg.LLM.EmbeddingDims), nil
 }
 
 func filterFrequentEntries(entries []*models.WorkingMemoryEntry, minAccess int) []*models.WorkingMemoryEntry {
 	return entries
-}
-
-type ConversationHistoryManager struct {
-	sessionID    uuid.UUID
-	repo         *repository.Repository
-	turns        []*models.ConversationTurn
-	currentTurnID int
-	cfg          *config.ContextConfig
 }
 
 func NewConversationHistoryManager(sessionID uuid.UUID, repo *repository.Repository, cfg *config.ContextConfig) *ConversationHistoryManager {

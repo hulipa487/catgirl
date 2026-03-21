@@ -249,7 +249,7 @@ func (rc *RuntimeCoordinator) runMemoryConsolidation() {
 	}
 
 	for _, session := range sessions {
-		ltm := NewLongTermMemoryManager(session.ID, rc.repo, rc.config)
+		ltm := NewLongTermMemoryManager(session.ID, rc.repo, rc.config, rc.logger)
 		if err := ltm.ConsolidateMemories(ctx); err != nil {
 			rc.logger.Error().Err(err).Str("session_id", session.ID.String()).Msg("memory consolidation failed")
 		}
