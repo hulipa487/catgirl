@@ -210,28 +210,14 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 		return fmt.Errorf("failed to get session context")
 	}
 
-	recentTurns := session.History.GetRecentTurns(session.History.cfg.PreserveRecentTurns)
+	// A worker agent should be stateless and generic.
+	// Its context is solely the task description and whatever it finds via tools.
 	messages := []llm.ChatMessage{
-		{Role: "system", Content: fmt.Sprintf("You are Catgirl, an autonomous task agent.\nYour current task is: %s\nUse tools to complete it.", taskInstance.Description)},
+		{Role: "system", Content: fmt.Sprintf("You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task and report back using the COMPLETE_TASK or FAIL_TASK tool.", taskInstance.Description)},
 	}
 
-	for _, t := range recentTurns {
-		if t.Action == "USER_MESSAGE" {
-			var msgData map[string]interface{}
-			if err := json.Unmarshal(t.Result, &msgData); err == nil {
-				if text, ok := msgData["text"].(string); ok && text != "" {
-					messages = append(messages, llm.ChatMessage{Role: "user", Content: text})
-				}
-			}
-		} else if t.Action == "SEND_MESSAGE" {
-			var msgData map[string]interface{}
-			if err := json.Unmarshal(t.Result, &msgData); err == nil {
-				if text, ok := msgData["text"].(string); ok && text != "" {
-					messages = append(messages, llm.ChatMessage{Role: "assistant", Content: text})
-				}
-			}
-		}
-	}
+	// Fetch any internal task-owner channel history if there was any (omitted here for simplicity,
+	// but workers shouldn't get the user's full main orchestrator chat history directly).
 
 	tools := []llm.Tool{
 		{

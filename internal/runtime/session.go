@@ -221,8 +221,14 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 
 		// Get recent context
 		recentTurns := session.History.GetRecentTurns(session.History.cfg.PreserveRecentTurns)
+
+		sysPrompt := s.config.LLM.SystemPrompt
+		if sysPrompt == "" {
+			sysPrompt = "You are an autonomous agent. You MUST use the SEND_MESSAGE tool to communicate with the user. Any raw text you output will be treated as internal thoughts and the user will not see it."
+		}
+
 		messages := []llm.ChatMessage{
-			{Role: "system", Content: "You are Catgirl, a helpful autonomous agent. Keep responses concise and natural."},
+			{Role: "system", Content: sysPrompt},
 		}
 
 		for _, t := range recentTurns {
@@ -367,19 +373,15 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 				}
 			}
 		} else {
-			// Fallback if LLM replies without a tool call
-			replyMsg = msg.Content
-			if s.OnReply != nil && replyMsg != "" {
-				s.OnReply(telegramUserID, replyMsg)
-			}
+			// Log the text as internal thought/reasoning, but DO NOT send it to the user
+			// since it didn't explicitly use the SEND_MESSAGE tool.
 
-			replyResultMap := map[string]interface{}{"text": replyMsg}
-			replyResultBytes, _ := json.Marshal(replyResultMap)
+			s.logger.Info().Str("content", msg.Content).Msg("Main Orchestrator reasoned (no tool called)")
 
 			agentTurn := &models.ConversationTurn{
-				Thought:   "",
-				Action:    "SEND_MESSAGE",
-				Result:    replyResultBytes,
+				Thought:   msg.Content,
+				Action:    "THINK",
+				Result:    []byte(`{}`), // No tool result to capture
 				Tokens:    0,
 				Timestamp: time.Now(),
 			}

@@ -59,6 +59,7 @@ type LLMConfig struct {
 	EmbeddingDims   int    `mapstructure:"embedding_dims"`
 	MaxTokens       int    `mapstructure:"max_tokens"`
 	TimeoutSecs     int    `mapstructure:"timeout_seconds"`
+	SystemPrompt    string `mapstructure:"system_prompt"`
 }
 
 type AgentPoolConfig struct {
