@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -105,7 +106,7 @@ func setupLogger(level, format string) zerolog.Logger {
 
 	zerolog.SetGlobalLevel(lvl)
 
-	var output zerolog.Writer
+	var output io.Writer
 	output = zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "2006-01-02 15:04:05"}
 
 	return zerolog.New(output).With().Timestamp().Logger()
