@@ -49,7 +49,12 @@ func NewTelegramService(cfg *config.TelegramConfig, repo *repository.Repository,
 }
 
 func (s *TelegramService) SetWebhook(ctx context.Context) error {
-	_, err := s.bot.SetWebhook(s.config.WebhookURL)
+	wh, err := tgbotapi.NewWebhook(s.config.WebhookURL)
+	if err != nil {
+		return fmt.Errorf("failed to create webhook config: %w", err)
+	}
+
+	_, err = s.bot.Request(wh)
 	if err != nil {
 		return fmt.Errorf("failed to set webhook: %w", err)
 	}
