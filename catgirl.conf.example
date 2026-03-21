@@ -1,0 +1,78 @@
+# Catgirl Agentic Runtime Configuration
+
+[global]
+max_task_depth = 3
+max_queue_size = 1000
+container_cleanup_delay_seconds = 300
+snapshot_enabled = true
+session_timeout_seconds = 3600
+
+[database]
+host = "localhost"
+port = 5432
+user = "catgirl"
+password = "your_password_here"
+dbname = "catgirl"
+sslmode = "disable"
+
+[llm]
+api_key = "your_api_key_here"
+base_url = "https://api.openai.com/v1"
+gp_model = "gpt-4o"
+reasoner_model = "gpt-4o"
+embedding_model = "text-embedding-3-large"
+embedding_dims = 1024
+max_tokens = 4096
+timeout_seconds = 120
+
+[agent_pool]
+min_agents = 5
+max_agents = 50
+gp_agent_ratio = 0.8
+idle_timeout_seconds = 300
+max_tasks_per_agent = 100
+spawn_timeout_seconds = 30
+cleanup_timeout_seconds = 10
+
+[snapshots]
+enabled = true
+storage_path = "/var/catgirl/snapshots"
+max_storage_bytes = 10737418240
+[snapsho1ts.retention]
+COMPLETED = "7d"
+FAILED = "30d"
+EXITED = "7d"
+INTERRUPTED = "14d"
+
+[telegram]
+bot_token = "your_telegram_bot_token_here"
+webhook_url = "https://your-domain.com/telegram/webhook"
+listen_addr = "0.0.0.0:8081"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[auth]
+jwt_secret = "your_jwt_secret_here"
+jwt_issuer = "catgirl-runtime"
+allowed_memberships = ["free", "basic", "pro", "enterprise"]
+
+[context]
+max_tokens = 128000
+compaction_threshold = 0.8
+preserve_recent_turns = 20
+compaction_agent_type = "reasoner"
+
+[rag]
+enabled = true
+default_top_k = 5
+auto_retrieve.enabled = true
+auto_retrieve.on_llm_call = true
+auto_retrieve.top_k = 3
+auto_retrieve.max_results = 10
+min_similarity = 0.7
+
+[logging]
+level = "info"
+format = "json"
