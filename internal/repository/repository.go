@@ -429,31 +429,35 @@ func (r *Repository) CreateLongTermMemory(ctx context.Context, m *models.LongTer
 	if err != nil {
 		return fmt.Errorf("failed to marshal embedding: %w", err)
 	}
+	embeddingStr := string(embeddingJSON)
+
 	sourceAgentsJSON, err := json.Marshal(m.SourceAgentIDs)
 	if err != nil {
 		return fmt.Errorf("failed to marshal source agents: %w", err)
 	}
 	_, err = r.db.Pool.Exec(ctx, `
 		INSERT INTO long_term_memories (id, session_id, tier, content, embedding, metadata, access_count, last_accessed_at, source_agent_ids, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, m.ID, m.SessionID, m.Tier, m.Content, embeddingJSON, m.Metadata, m.AccessCount, m.LastAccessedAt, sourceAgentsJSON, m.CreatedAt, m.ExpiresAt)
+		VALUES ($1, $2, $3, $4, $5::vector, $6, $7, $8, $9, $10, $11)
+	`, m.ID, m.SessionID, m.Tier, m.Content, embeddingStr, m.Metadata, m.AccessCount, m.LastAccessedAt, sourceAgentsJSON, m.CreatedAt, m.ExpiresAt)
 	return err
 }
 
 func (r *Repository) SearchLongTermMemory(ctx context.Context, sessionID uuid.UUID, queryEmbedding []float32, topK int) ([]*models.LongTermMemory, error) {
-	embeddingJSON, err := json.Marshal(queryEmbedding)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal embedding: %w", err)
-	}
+	// Format array as Postgres vector string '[1.0, 2.0, ...]'
+	embeddingStr := fmt.Sprintf("%v", queryEmbedding)
+	// Replace spaces with commas to match vector format
+	// Quick hack since %v gives "[1 2 3]" and vector needs "[1,2,3]"
+	embeddingJSON, _ := json.Marshal(queryEmbedding)
+	embeddingStr = string(embeddingJSON)
 
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT id, session_id, tier, content, embedding, metadata, access_count, last_accessed_at, source_agent_ids, created_at, expires_at,
-			   1 - (embedding <=> $1) AS similarity
+			   1 - (embedding <=> $1::vector) AS similarity
 		FROM long_term_memories
 		WHERE session_id = $2
-		ORDER BY embedding <=> $1
+		ORDER BY embedding <=> $1::vector
 		LIMIT $3
-	`, embeddingJSON, sessionID, topK)
+	`, embeddingStr, sessionID, topK)
 	if err != nil {
 		return nil, err
 	}
@@ -463,7 +467,8 @@ func (r *Repository) SearchLongTermMemory(ctx context.Context, sessionID uuid.UU
 	for rows.Next() {
 		var m models.LongTermMemory
 		var embeddingJSON, sourceAgentsJSON json.RawMessage
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Tier, &m.Content, &embeddingJSON, &m.Metadata, &m.AccessCount, &m.LastAccessedAt, &sourceAgentsJSON, &m.CreatedAt, &m.ExpiresAt); err != nil {
+		var similarity float64
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Tier, &m.Content, &embeddingJSON, &m.Metadata, &m.AccessCount, &m.LastAccessedAt, &sourceAgentsJSON, &m.CreatedAt, &m.ExpiresAt, &similarity); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(embeddingJSON, &m.Embedding); err != nil {

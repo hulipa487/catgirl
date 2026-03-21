@@ -148,7 +148,8 @@ CREATE TABLE IF NOT EXISTS long_term_memories (
 
 CREATE INDEX IF NOT EXISTS idx_memories_session ON long_term_memories(session_id);
 CREATE INDEX IF NOT EXISTS idx_memories_tier ON long_term_memories(tier);
-CREATE INDEX IF NOT EXISTS idx_memories_embedding ON long_term_memories USING ivfflat(embedding cosine_ops);
+-- Note: removed vector index due to extension operator class issues
+-- CREATE INDEX IF NOT EXISTS idx_memories_embedding ON long_term_memories USING ivfflat(embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_memories_access ON long_term_memories(access_count DESC, last_accessed_at);
 CREATE INDEX IF NOT EXISTS idx_memories_expires ON long_term_memories(expires_at);
 
