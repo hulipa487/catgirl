@@ -20,6 +20,10 @@ func New(db *database.DB) *Repository {
 	return &Repository{db: db}
 }
 
+func (r *Repository) Ping(ctx context.Context) map[string]interface{} {
+	return r.db.Health(ctx)
+}
+
 // Session Repository
 
 func (r *Repository) CreateSession(ctx context.Context, s *models.Session) error {
