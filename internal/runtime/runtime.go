@@ -79,7 +79,7 @@ func (rc *RuntimeCoordinator) initializeServices() error {
 	agentPool := agent.NewAgentPool(rc.repo, rc.taskService, rc.config, rc.logger)
 	rc.agentPool = agentPool
 
-	sessionSvc := NewSessionService(rc.repo, rc.config, rc.logger)
+	sessionSvc := NewSessionService(rc.repo, rc.config, rc.logger, rc.llmSvc)
 	rc.sessionSvc = sessionSvc
 
 	authSvc := auth.NewAuthService(&rc.config.Auth, rc.logger)

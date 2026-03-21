@@ -18,6 +18,7 @@ type SessionService struct {
 	repo   *repository.Repository
 	config *config.Config
 	logger zerolog.Logger
+	llmSvc *llm.LLMService
 	sessions map[uuid.UUID]*Session
 	mu     sync.RWMutex
 	OnReply func(telegramUserID int64, message string)
@@ -66,11 +67,12 @@ type SkillSessionClient struct {
 	skills    map[string]*models.Skill
 }
 
-func NewSessionService(repo *repository.Repository, cfg *config.Config, logger zerolog.Logger) *SessionService {
+func NewSessionService(repo *repository.Repository, cfg *config.Config, logger zerolog.Logger, llmSvc *llm.LLMService) *SessionService {
 	return &SessionService{
 		repo:     repo,
 		config:   cfg,
 		logger:   logger,
+		llmSvc:   llmSvc,
 		sessions: make(map[uuid.UUID]*Session),
 	}
 }
@@ -207,18 +209,55 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 		return err
 	}
 
-	// Simple simulation of orchestrator thought-action loop picking it up and replying
+	// Real implementation of orchestrator thought-action loop picking it up and replying
 	go func() {
-		// Simulate thinking
-		time.Sleep(1 * time.Second)
+		// Wait a brief moment to ensure DB transaction finishes
+		time.Sleep(100 * time.Millisecond)
 
-		replyMsg := fmt.Sprintf("I received your message: %s\n\n(This is a simulated reply from the Main Orchestrator)", message)
+		// Get recent context
+		recentTurns := session.History.GetRecentTurns(session.History.cfg.PreserveRecentTurns)
+		messages := []llm.ChatMessage{
+			{Role: "system", Content: "You are Catgirl, a helpful autonomous agent. Keep responses concise and natural."},
+		}
+
+		for _, t := range recentTurns {
+			if t.Action == "USER_MESSAGE" {
+				var msgData map[string]interface{}
+				if err := json.Unmarshal(t.Result, &msgData); err == nil {
+					if text, ok := msgData["text"].(string); ok {
+						messages = append(messages, llm.ChatMessage{Role: "user", Content: text})
+					}
+				}
+			} else if t.Action == "SEND_MESSAGE" {
+				var msgData map[string]interface{}
+				if err := json.Unmarshal(t.Result, &msgData); err == nil {
+					if text, ok := msgData["text"].(string); ok {
+						messages = append(messages, llm.ChatMessage{Role: "assistant", Content: text})
+					}
+				}
+			}
+		}
+
+		// If recentTurns didn't include the current message we just pushed
+		// (e.g. async timing), add it
+		if len(messages) == 1 || messages[len(messages)-1].Content != message {
+			messages = append(messages, llm.ChatMessage{Role: "user", Content: message})
+		}
+
+		resp, err := s.llmSvc.Chat(context.Background(), s.config.LLM.GPModel, messages, 0)
+
+		replyMsg := "Sorry, I had trouble processing that request."
+		if err != nil || len(resp.Choices) == 0 {
+			s.logger.Error().Err(err).Msg("Failed to call LLM for reply")
+		} else {
+			replyMsg = resp.Choices[0].Message.Content
+		}
 
 		// Log the agent's action
 		agentTurn := &models.ConversationTurn{
-			Thought:   "The user sent a message. I should acknowledge it.",
+			Thought:   "The user sent a message. I should reply.",
 			Action:    "SEND_MESSAGE",
-			Result:    []byte(fmt.Sprintf(`{"text":"%s"}`, replyMsg)),
+			Result:    []byte(fmt.Sprintf(`{"text":%q}`, replyMsg)),
 			Tokens:    0,
 			Timestamp: time.Now(),
 		}
