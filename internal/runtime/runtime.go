@@ -203,16 +203,201 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 
 	agent.SetAgentServices(workerAgent, rc.repo, taskInstance.SessionID, rc.llmSvc, rc.config)
 
-	result := map[string]interface{}{
-		"status":  "completed",
-		"message": "Task executed successfully",
+	// Build context
+	session, err := rc.sessionSvc.GetSession(ctx, taskInstance.SessionID)
+	if err != nil || session == nil {
+		logger.Error().Err(err).Msg("Failed to get session context for task")
+		return fmt.Errorf("failed to get session context")
 	}
 
-	taskInstance.Status = models.TaskStatusCompleted
-	taskInstance.CompletedAt = &now
-	taskInstance.Result, _ = json.Marshal(result)
+	recentTurns := session.History.GetRecentTurns(session.History.cfg.PreserveRecentTurns)
+	messages := []llm.ChatMessage{
+		{Role: "system", Content: fmt.Sprintf("You are Catgirl, an autonomous task agent.\nYour current task is: %s\nUse tools to complete it.", taskInstance.Description)},
+	}
 
-	rc.repo.UpdateTaskInstance(ctx, taskInstance)
+	for _, t := range recentTurns {
+		if t.Action == "USER_MESSAGE" {
+			var msgData map[string]interface{}
+			if err := json.Unmarshal(t.Result, &msgData); err == nil {
+				if text, ok := msgData["text"].(string); ok && text != "" {
+					messages = append(messages, llm.ChatMessage{Role: "user", Content: text})
+				}
+			}
+		} else if t.Action == "SEND_MESSAGE" {
+			var msgData map[string]interface{}
+			if err := json.Unmarshal(t.Result, &msgData); err == nil {
+				if text, ok := msgData["text"].(string); ok && text != "" {
+					messages = append(messages, llm.ChatMessage{Role: "assistant", Content: text})
+				}
+			}
+		}
+	}
+
+	tools := []llm.Tool{
+		{
+			Type: "function",
+			Function: llm.ToolFunction{
+				Name:        "SPAWN_TASK",
+				Description: "Spawn a sub-task",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"description": map[string]interface{}{"type": "string"},
+						"priority":    map[string]interface{}{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
+					},
+					"required": []string{"description", "priority"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.ToolFunction{
+				Name:        "COMPLETE_TASK",
+				Description: "Mark the current task as completed",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"result_summary": map[string]interface{}{"type": "string"},
+					},
+					"required": []string{"result_summary"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.ToolFunction{
+				Name:        "FAIL_TASK",
+				Description: "Mark the current task as failed",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"reason": map[string]interface{}{"type": "string"},
+					},
+					"required": []string{"reason"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.ToolFunction{
+				Name:        "SEND_MESSAGE",
+				Description: "Send a message to the user/orchestrator",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"message": map[string]interface{}{"type": "string"},
+					},
+					"required": []string{"message"},
+				},
+			},
+		},
+	}
+
+	resp, err := rc.llmSvc.ChatWithTools(ctx, rc.config.LLM.GPModel, messages, tools, 0)
+	if err != nil || len(resp.Choices) == 0 {
+		logger.Error().Err(err).Msg("Task execution LLM call failed")
+		taskInstance.Status = models.TaskStatusFailed
+		errStr := "LLM call failed"
+		if err != nil {
+			errStr = err.Error()
+		}
+		taskInstance.Error = &errStr
+		rc.repo.UpdateTaskInstance(ctx, taskInstance)
+		return err
+	}
+
+	msg := resp.Choices[0].Message
+
+	// Handle tool calls
+	if len(msg.ToolCalls) > 0 {
+		for _, tc := range msg.ToolCalls {
+			logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Agent called tool")
+
+			var args map[string]interface{}
+			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+
+			switch tc.Function.Name {
+			case "SEND_MESSAGE":
+				if text, ok := args["message"].(string); ok {
+					rc.sessionSvc.OnReply(session.TelegramUserID, text)
+
+					replyResultMap := map[string]interface{}{"text": text}
+					replyResultBytes, _ := json.Marshal(replyResultMap)
+
+					agentTurn := &models.ConversationTurn{
+						Thought:   "I am sending a message.",
+						Action:    "SEND_MESSAGE",
+						Result:    replyResultBytes,
+						Tokens:    0,
+						Timestamp: time.Now(),
+					}
+					_ = rc.sessionSvc.AddConversationTurn(ctx, session.ID, agentTurn)
+				}
+
+				taskInstance.Status = models.TaskStatusCompleted
+				taskInstance.CompletedAt = &now
+				rc.repo.UpdateTaskInstance(ctx, taskInstance)
+
+			case "COMPLETE_TASK":
+				taskInstance.Status = models.TaskStatusCompleted
+				taskInstance.CompletedAt = &now
+				taskInstance.Result, _ = json.Marshal(args)
+				rc.repo.UpdateTaskInstance(ctx, taskInstance)
+
+			case "FAIL_TASK":
+				taskInstance.Status = models.TaskStatusFailed
+				taskInstance.CompletedAt = &now
+				if reason, ok := args["reason"].(string); ok {
+					taskInstance.Error = &reason
+				}
+				rc.repo.UpdateTaskInstance(ctx, taskInstance)
+
+			case "SPAWN_TASK":
+				desc, _ := args["description"].(string)
+				priStr, _ := args["priority"].(string)
+				pri := models.PriorityNormal
+				if priStr != "" {
+					pri = models.Priority(priStr)
+				}
+
+				_, err := rc.taskService.SpawnSubTask(ctx, taskInstance, desc, models.AgentTypeGeneralPurpose, pri)
+				if err != nil {
+					logger.Error().Err(err).Msg("Failed to spawn sub-task")
+				}
+
+				// Note: Re-enqueueing parent task or managing state machine would be needed for a full loop,
+				// for now we'll mark this single turn task as complete.
+				taskInstance.Status = models.TaskStatusCompleted
+				taskInstance.CompletedAt = &now
+				taskInstance.Result, _ = json.Marshal(map[string]string{"spawned": desc})
+				rc.repo.UpdateTaskInstance(ctx, taskInstance)
+			}
+		}
+	} else {
+		// Just a text response, let's assume it completes the task
+		taskInstance.Status = models.TaskStatusCompleted
+		taskInstance.CompletedAt = &now
+		taskInstance.Result, _ = json.Marshal(map[string]string{"text": msg.Content})
+		rc.repo.UpdateTaskInstance(ctx, taskInstance)
+
+		if msg.Content != "" {
+			rc.sessionSvc.OnReply(session.TelegramUserID, msg.Content)
+
+			replyResultMap := map[string]interface{}{"text": msg.Content}
+			replyResultBytes, _ := json.Marshal(replyResultMap)
+
+			agentTurn := &models.ConversationTurn{
+				Thought:   "",
+				Action:    "SEND_MESSAGE",
+				Result:    replyResultBytes,
+				Tokens:    0,
+				Timestamp: time.Now(),
+			}
+			_ = rc.sessionSvc.AddConversationTurn(ctx, session.ID, agentTurn)
+		}
+	}
+
+	workerAgent.Status = models.AgentStatusIdle
 
 	if rc.config.Snapshot.Enabled {
 		_, err := rc.snapshotSvc.CreateSnapshot(ctx, taskInstance, models.SnapshotReasonCompleted)

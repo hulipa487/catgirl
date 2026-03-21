@@ -10,6 +10,7 @@ import (
 	"github.com/hulipa487/catgirl/internal/config"
 	"github.com/hulipa487/catgirl/internal/models"
 	"github.com/hulipa487/catgirl/internal/repository"
+	"github.com/hulipa487/catgirl/internal/services/agent"
 	"github.com/hulipa487/catgirl/internal/services/llm"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -199,10 +200,13 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 		Msg("Message fed into session orchestrator")
 
 	// Store it in conversation history for the orchestrator to see
+	resultMap := map[string]interface{}{"text": message}
+	resultBytes, _ := json.Marshal(resultMap)
+
 	turn := &models.ConversationTurn{
 		Thought:   "",
 		Action:    "USER_MESSAGE",
-		Result:    []byte(fmt.Sprintf(`{"text":"%s"}`, message)),
+		Result:    resultBytes,
 		Tokens:    0,
 		Timestamp: time.Now(),
 	}
@@ -226,14 +230,18 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 				var msgData map[string]interface{}
 				if err := json.Unmarshal(t.Result, &msgData); err == nil {
 					if text, ok := msgData["text"].(string); ok {
-						messages = append(messages, llm.ChatMessage{Role: "user", Content: text})
+						if text != "" {
+							messages = append(messages, llm.ChatMessage{Role: "user", Content: text})
+						}
 					}
 				}
 			} else if t.Action == "SEND_MESSAGE" {
 				var msgData map[string]interface{}
 				if err := json.Unmarshal(t.Result, &msgData); err == nil {
 					if text, ok := msgData["text"].(string); ok {
-						messages = append(messages, llm.ChatMessage{Role: "assistant", Content: text})
+						if text != "" {
+							messages = append(messages, llm.ChatMessage{Role: "assistant", Content: text})
+						}
 					}
 				}
 			}
@@ -245,32 +253,137 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 			messages = append(messages, llm.ChatMessage{Role: "user", Content: message})
 		}
 
-		resp, err := s.llmSvc.Chat(context.Background(), s.config.LLM.GPModel, messages, 0)
+		tools := []llm.Tool{
+			{
+				Type: "function",
+				Function: llm.ToolFunction{
+					Name:        "SPAWN_TASK",
+					Description: "Spawn a sub-task",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"description": map[string]interface{}{"type": "string"},
+							"priority":    map[string]interface{}{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
+						},
+						"required": []string{"description", "priority"},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: llm.ToolFunction{
+					Name:        "COMPLETE_TASK",
+					Description: "Mark the current task as completed",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"result_summary": map[string]interface{}{"type": "string"},
+						},
+						"required": []string{"result_summary"},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: llm.ToolFunction{
+					Name:        "FAIL_TASK",
+					Description: "Mark the current task as failed",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"reason": map[string]interface{}{"type": "string"},
+						},
+						"required": []string{"reason"},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: llm.ToolFunction{
+					Name:        "SEND_MESSAGE",
+					Description: "Send a message to the user/orchestrator",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"message": map[string]interface{}{"type": "string"},
+						},
+						"required": []string{"message"},
+					},
+				},
+			},
+		}
+
+		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.config.LLM.GPModel, messages, tools, 0)
 
 		replyMsg := "Sorry, I had trouble processing that request."
 		if err != nil || len(resp.Choices) == 0 {
 			s.logger.Error().Err(err).Msg("Failed to call LLM for reply")
+			if s.OnReply != nil {
+				s.OnReply(telegramUserID, replyMsg)
+			}
+			return
+		}
+
+		msg := resp.Choices[0].Message
+
+		// Record usage
+		billingSvc := agent.NewBillingService(s.repo, sessionID, fmt.Sprintf("%d", telegramUserID))
+		_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, s.config.LLM.GPModel, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
+
+		// Process Tool Calls (or text response)
+		if len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				s.logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Main Orchestrator called tool")
+
+				var args map[string]interface{}
+				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+
+				switch tc.Function.Name {
+				case "SEND_MESSAGE":
+					if text, ok := args["message"].(string); ok {
+						if s.OnReply != nil {
+							s.OnReply(telegramUserID, text)
+						}
+
+						replyResultMap := map[string]interface{}{"text": text}
+						replyResultBytes, _ := json.Marshal(replyResultMap)
+
+						agentTurn := &models.ConversationTurn{
+							Thought:   "I am sending a message.",
+							Action:    "SEND_MESSAGE",
+							Result:    replyResultBytes,
+							Tokens:    0,
+							Timestamp: time.Now(),
+						}
+						_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
+					}
+				case "SPAWN_TASK":
+					// Here you would enqueue the task
+					s.logger.Info().Msg("SPAWN_TASK tool called by orchestrator")
+				case "COMPLETE_TASK":
+					s.logger.Info().Msg("COMPLETE_TASK tool called by orchestrator")
+				case "FAIL_TASK":
+					s.logger.Info().Msg("FAIL_TASK tool called by orchestrator")
+				}
+			}
 		} else {
-			replyMsg = resp.Choices[0].Message.Content
-		}
+			// Fallback if LLM replies without a tool call
+			replyMsg = msg.Content
+			if s.OnReply != nil && replyMsg != "" {
+				s.OnReply(telegramUserID, replyMsg)
+			}
 
-		// Log the agent's action
-		agentTurn := &models.ConversationTurn{
-			Thought:   "The user sent a message. I should reply.",
-			Action:    "SEND_MESSAGE",
-			Result:    []byte(fmt.Sprintf(`{"text":%q}`, replyMsg)),
-			Tokens:    0,
-			Timestamp: time.Now(),
-		}
-		_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
+			replyResultMap := map[string]interface{}{"text": replyMsg}
+			replyResultBytes, _ := json.Marshal(replyResultMap)
 
-		s.logger.Info().
-			Str("session_id", sessionID.String()).
-			Str("reply", replyMsg).
-			Msg("Main Orchestrator processed user message and generated a reply")
-
-		if s.OnReply != nil {
-			s.OnReply(telegramUserID, replyMsg)
+			agentTurn := &models.ConversationTurn{
+				Thought:   "",
+				Action:    "SEND_MESSAGE",
+				Result:    replyResultBytes,
+				Tokens:    0,
+				Timestamp: time.Now(),
+			}
+			_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
 		}
 	}()
 

@@ -20,15 +20,42 @@ type LLMService struct {
 }
 
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string      `json:"role"`
+	Content    string      `json:"content"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+	Name       string      `json:"name,omitempty"` // For tool messages
 }
 
 type ChatRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	MaxTokens int          `json:"max_tokens,omitempty"`
-	Temperature float64    `json:"temperature,omitempty"`
+	Model       string        `json:"model"`
+	Messages    []ChatMessage `json:"messages"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Temperature float64       `json:"temperature,omitempty"`
+	Tools       []Tool        `json:"tools,omitempty"`
+	ToolChoice  interface{}   `json:"tool_choice,omitempty"`
+}
+
+type Tool struct {
+	Type     string         `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+type ToolCall struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON string
 }
 
 type ChatResponse struct {
@@ -73,10 +100,11 @@ func NewLLMService(cfg *config.LLMConfig, logger zerolog.Logger) *LLMService {
 	}
 }
 
-func (s *LLMService) Chat(ctx context.Context, model string, messages []ChatMessage, maxTokens int) (*ChatResponse, error) {
+func (s *LLMService) ChatWithTools(ctx context.Context, model string, messages []ChatMessage, tools []Tool, maxTokens int) (*ChatResponse, error) {
 	reqBody := ChatRequest{
 		Model:     model,
 		Messages:  messages,
+		Tools:     tools,
 		MaxTokens: maxTokens,
 	}
 
@@ -115,6 +143,9 @@ func (s *LLMService) Chat(ctx context.Context, model string, messages []ChatMess
 	}
 
 	return &chatResp, nil
+}
+func (s *LLMService) Chat(ctx context.Context, model string, messages []ChatMessage, maxTokens int) (*ChatResponse, error) {
+	return s.ChatWithTools(ctx, model, messages, nil, maxTokens)
 }
 
 func (s *LLMService) ChatSimple(ctx context.Context, model string, systemPrompt, userMessage string) (string, *Usage, error) {
@@ -183,6 +214,9 @@ func (s *LLMService) EmbedOne(ctx context.Context, text string) ([]float32, erro
 	embeddings, _, err := s.Embed(ctx, []string{text})
 	if err != nil {
 		return nil, err
+	}
+	if len(embeddings) == 0 {
+		return nil, fmt.Errorf("no embeddings returned")
 	}
 	return embeddings[0], nil
 }
