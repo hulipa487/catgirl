@@ -72,6 +72,18 @@ func (r *MigrationRunner) LoadMigrations(migrationsPath string) ([]*Migration, e
 }
 
 func (r *MigrationRunner) Run(ctx context.Context, migrationsPath string) error {
+	// Check if this is the first run
+	var tableCount int
+	err := r.db.Pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_name = 'sessions'").Scan(&tableCount)
+	if err != nil {
+		return fmt.Errorf("failed to check existing tables: %w", err)
+	}
+
+	if tableCount == 0 {
+		r.logger.Info().Msg("no tables found, running initial schema setup")
+		// The 001_initial_schema.sql will be applied automatically by the logic below
+	}
+
 	migrations, err := r.LoadMigrations(migrationsPath)
 	if err != nil {
 		return fmt.Errorf("failed to load migrations: %w", err)
@@ -116,8 +128,19 @@ func (r *MigrationRunner) Run(ctx context.Context, migrationsPath string) error 
 }
 
 func (r *MigrationRunner) isApplied(ctx context.Context, version string) (bool, error) {
+	// ensure the table exists before querying
+	_, err := r.db.Pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version VARCHAR(255) PRIMARY KEY,
+			applied_at TIMESTAMPTZ DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		return false, fmt.Errorf("failed to create schema_migrations table: %w", err)
+	}
+
 	var count int
-	err := r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = $1", version).Scan(&count)
+	err = r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = $1", version).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check migration status: %w", err)
 	}

@@ -17,6 +17,21 @@ CREATE TABLE IF NOT EXISTS sessions (
     metadata JSONB
 );
 
+-- Telegram users table
+CREATE TABLE IF NOT EXISTS telegram_users (
+    telegram_user_id BIGINT PRIMARY KEY,
+    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
+    username VARCHAR(255),
+    first_name VARCHAR(255),
+    last_name VARCHAR(255),
+    is_banned BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_activity TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Note: In PostgreSQL, adding a foreign key to an existing table using IF NOT EXISTS isn't natively supported in a clean way via standard syntax, so we just set up the basic references above.
+
+CREATE INDEX IF NOT EXISTS idx_telegram_users_session ON telegram_users(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_telegram_user ON sessions(telegram_user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 
@@ -235,19 +250,6 @@ CREATE TABLE IF NOT EXISTS conversation_history (
 CREATE INDEX IF NOT EXISTS idx_history_session ON conversation_history(session_id);
 CREATE INDEX IF NOT EXISTS idx_history_turn ON conversation_history(session_id, turn_id DESC);
 
--- Telegram users table
-CREATE TABLE IF NOT EXISTS telegram_users (
-    telegram_user_id BIGINT PRIMARY KEY,
-    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
-    username VARCHAR(255),
-    first_name VARCHAR(255),
-    last_name VARCHAR(255),
-    is_banned BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    last_activity TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_telegram_users_session ON telegram_users(session_id);
 
 -- Migrate migration tracking
 CREATE TABLE IF NOT EXISTS schema_migrations (
