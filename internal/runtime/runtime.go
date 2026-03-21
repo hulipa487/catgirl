@@ -38,6 +38,7 @@ type RuntimeCoordinator struct {
 	skillSvc    *skill.SkillService
 	snapshotSvc *snapshot.SnapshotService
 	ragSvc      *rag.RAGService
+	telegramSvc *telegram.TelegramService
 
 	workerWg   sync.WaitGroup
 	stopCh     chan struct{}
@@ -95,6 +96,12 @@ func (rc *RuntimeCoordinator) initializeServices() error {
 	ragSvc := rag.NewRAGService(rc.repo, rc.llmSvc, &rc.config.RAG, rc.logger)
 	rc.ragSvc = ragSvc
 
+	telegramSvc, err := telegram.NewTelegramService(&rc.config.Telegram, rc.repo, rc.sessionSvc, rc.logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize telegram service: %w", err)
+	}
+	rc.telegramSvc = telegramSvc
+
 	return nil
 }
 
@@ -107,6 +114,10 @@ func (rc *RuntimeCoordinator) Start(ctx context.Context) error {
 
 	if err := rc.startWorkerLoop(); err != nil {
 		return fmt.Errorf("failed to start worker loop: %w", err)
+	}
+
+	if err := rc.telegramSvc.SetWebhook(ctx); err != nil {
+		rc.logger.Warn().Err(err).Msg("failed to set telegram webhook (continuing anyway)")
 	}
 
 	rc.logger.Info().Msg("runtime coordinator started")
@@ -321,4 +332,8 @@ func (rc *RuntimeCoordinator) GetRAGService() *rag.RAGService {
 
 func (rc *RuntimeCoordinator) GetRepository() *repository.Repository {
 	return rc.repo
+}
+
+func (rc *RuntimeCoordinator) GetTelegramService() *telegram.TelegramService {
+	return rc.telegramSvc
 }

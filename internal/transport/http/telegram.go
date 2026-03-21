@@ -17,6 +17,8 @@ func NewTelegramHandler(svc *telegram.TelegramService) *TelegramHandler {
 }
 
 func (h *TelegramHandler) HandleWebhook(c *gin.Context) {
+	// Optional check: you can verify c.Param("token") == botToken
+
 	var update tgbotapi.Update
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

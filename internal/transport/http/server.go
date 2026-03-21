@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/hulipa487/catgirl/internal/config"
@@ -13,49 +14,61 @@ import (
 )
 
 type Server struct {
-	httpServer *http.Server
-	runtime   *runtime.RuntimeCoordinator
-	config    *config.Config
-	logger    zerolog.Logger
+	apiServer      *http.Server
+	telegramServer *http.Server
+	runtime        *runtime.RuntimeCoordinator
+	config         *config.Config
+	logger         zerolog.Logger
 }
 
 func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolog.Logger) *Server {
-	gin.SetMode(gin.ReleaseMode)
-	router := gin.New()
-	router.Use(gin.Recovery())
-	router.Use(requestLogger(logger))
+	// API Router
+	apiRouter := gin.New()
+	apiRouter.Use(gin.Recovery())
+	apiRouter.Use(requestLogger(logger))
 
 	handlers := NewHandlers(rt, cfg, logger)
 
-	router.GET("/health", handlers.HealthCheck)
-	router.GET("/health/detailed", handlers.GetHealth)
+	apiRouter.GET("/health", handlers.HealthCheck)
+	apiRouter.GET("/health/detailed", handlers.GetHealth)
+	apiRouter.GET("/api/v1/sessions", handlers.ListSessions)
+	apiRouter.GET("/api/v1/sessions/:session_id", handlers.GetSession)
+	apiRouter.GET("/api/v1/tasks", handlers.ListTasks)
+	apiRouter.GET("/api/v1/tasks/:instance_id", handlers.GetTask)
+	apiRouter.GET("/api/v1/queue/status", handlers.GetQueueStatus)
+	apiRouter.GET("/api/v1/agents", handlers.ListAgents)
+	apiRouter.GET("/api/v1/agents/pool/status", handlers.GetAgentPoolStatus)
+	apiRouter.GET("/api/v1/snapshots", handlers.ListSnapshots)
+	apiRouter.GET("/api/v1/skills", handlers.ListSkills)
+	apiRouter.GET("/api/v1/mcp/servers", handlers.ListMCPServers)
+	apiRouter.GET("/api/v1/usage/summary", handlers.GetUsageSummary)
+	apiRouter.GET("/api/v1/memory/search", handlers.SearchMemory)
+	apiRouter.GET("/api/v1/metrics", handlers.GetSystemMetrics)
 
-	router.GET("/api/v1/sessions", handlers.ListSessions)
-	router.GET("/api/v1/sessions/:session_id", handlers.GetSession)
+	// Telegram Router
+	telegramRouter := gin.New()
+	telegramRouter.Use(gin.Recovery())
+	telegramRouter.Use(requestLogger(logger))
 
-	router.GET("/api/v1/tasks", handlers.ListTasks)
-	router.GET("/api/v1/tasks/:instance_id", handlers.GetTask)
-	router.GET("/api/v1/queue/status", handlers.GetQueueStatus)
+	telegramHandler := NewTelegramHandler(rt.GetTelegramService())
 
-	router.GET("/api/v1/agents", handlers.ListAgents)
-	router.GET("/api/v1/agents/pool/status", handlers.GetAgentPoolStatus)
-
-	router.GET("/api/v1/snapshots", handlers.ListSnapshots)
-
-	router.GET("/api/v1/skills", handlers.ListSkills)
-
-	router.GET("/api/v1/mcp/servers", handlers.ListMCPServers)
-
-	router.GET("/api/v1/usage/summary", handlers.GetUsageSummary)
-
-	router.GET("/api/v1/memory/search", handlers.SearchMemory)
-
-	router.GET("/api/v1/metrics", handlers.GetSystemMetrics)
+	webhookPath := "/telegram/webhook"
+	if u, err := url.Parse(cfg.Telegram.WebhookURL); err == nil && u.Path != "" {
+		webhookPath = u.Path
+	}
+	telegramRouter.POST(webhookPath, telegramHandler.HandleWebhook)
 
 	return &Server{
-		httpServer: &http.Server{
+		apiServer: &http.Server{
 			Addr:         cfg.Server.Addr(),
-			Handler:      router,
+			Handler:      apiRouter,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		},
+		telegramServer: &http.Server{
+			Addr:         cfg.Telegram.ListenAddr,
+			Handler:      telegramRouter,
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 30 * time.Second,
 			IdleTimeout:  60 * time.Second,
@@ -67,18 +80,40 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 }
 
 func (s *Server) Start() error {
-	s.logger.Info().Str("addr", s.config.Server.Addr()).Msg("starting HTTP server")
+	errCh := make(chan error, 2)
 
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("HTTP server error: %w", err)
+	go func() {
+		s.logger.Info().Str("addr", s.config.Server.Addr()).Msg("starting API HTTP server")
+		if err := s.apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("API HTTP server error: %w", err)
+		}
+	}()
+
+	go func() {
+		s.logger.Info().Str("addr", s.config.Telegram.ListenAddr).Msg("starting Telegram Webhook HTTP server")
+		if err := s.telegramServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("Telegram Webhook HTTP server error: %w", err)
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(1 * time.Second): // Give servers a moment to start without error
+		return nil
 	}
-
-	return nil
 }
 
 func (s *Server) Stop(ctx context.Context) error {
-	s.logger.Info().Msg("stopping HTTP server")
-	return s.httpServer.Shutdown(ctx)
+	s.logger.Info().Msg("stopping HTTP servers")
+
+	err1 := s.apiServer.Shutdown(ctx)
+	err2 := s.telegramServer.Shutdown(ctx)
+
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }
 
 func requestLogger(logger zerolog.Logger) gin.HandlerFunc {
