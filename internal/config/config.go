@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -229,8 +228,8 @@ func (c *Config) Validate() error {
 	if c.RAG.AutoRetrieve.MaxResults == 0 {
 		c.RAG.AutoRetrieve.MaxResults = 10
 	}
-	if c.RAG.EmbeddingDims == 0 {
-		c.RAG.EmbeddingDims = 1024
+	if c.LLM.EmbeddingDims == 0 {
+		c.LLM.EmbeddingDims = 1024
 	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "info"

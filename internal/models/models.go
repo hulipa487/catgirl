@@ -308,7 +308,6 @@ const (
 	ActionEmitResult        ActionType = "EMIT_RESULT"
 	ActionNotify            ActionType = "NOTIFY"
 	ActionGetContext        ActionType = "GET_CONTEXT"
-	ActionSearchMemory      ActionType = "SEARCH_MEMORY"
 )
 
 type Action struct {
