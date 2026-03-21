@@ -19,6 +19,7 @@ import (
 	"github.com/hulipa487/catgirl/internal/services/skill"
 	"github.com/hulipa487/catgirl/internal/services/snapshot"
 	"github.com/hulipa487/catgirl/internal/services/task"
+	"github.com/hulipa487/catgirl/internal/services/telegram"
 	"github.com/rs/zerolog"
 )
 
