@@ -120,8 +120,7 @@ func (s ServerConfig) Addr() string {
 }
 
 type AuthConfig struct {
-	JWTSecret          string   `mapstructure:"jwt_secret" json:"jwt_secret"`
-	JWTIssuer          string   `mapstructure:"jwt_issuer" json:"jwt_issuer"`
+	MTFPassURL          string   `mapstructure:"mtfpass_url" json:"mtfpass_url"`
 	AllowedMemberships []string `mapstructure:"allowed_memberships" json:"allowed_memberships"`
 }
 

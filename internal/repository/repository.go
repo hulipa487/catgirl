@@ -128,7 +128,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 			},
 		},
 		Telegram: config.TelegramConfig{Bots: telegramBots, ListenAddr: telegramListenAddr},
-		Auth:     config.AuthConfig{JWTSecret: authJwtSecret, JWTIssuer: authJwtIssuer, AllowedMemberships: allowedMemberships},
+		Auth:     config.AuthConfig{}, // Auth is now handled via mtfpass URL from config file, not DB
 		Context: config.ContextConfig{
 			MaxTokens:           contextMaxTokens,
 			CompactionThreshold: contextCompactionThreshold,
@@ -156,11 +156,10 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 	}
 	defer tx.Rollback(ctx)
 
-	membershipsJSON, _ := json.Marshal(cfg.Auth.AllowedMemberships)
-
 	telegramBotsJSONBytes, _ := json.Marshal(cfg.Telegram.Bots)
 
 	// Upsert System Config (per-bot prompts/tools now stored in telegram_bots JSONB)
+	// Note: auth columns are no longer used - auth is via mtfpass URL from config file
 	_, err = tx.Exec(ctx, `
 		INSERT INTO system_config (
 			id, max_task_depth, max_queue_size,
@@ -199,7 +198,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		cfg.AgentPool.MinAgents, cfg.AgentPool.MaxAgents, cfg.AgentPool.IdleTimeoutSecs,
 		cfg.Snapshot.Enabled, cfg.Snapshot.StoragePath, cfg.Snapshot.MaxStorageBytes, cfg.Snapshot.Retention.Completed, cfg.Snapshot.Retention.Failed, cfg.Snapshot.Retention.Exited, cfg.Snapshot.Retention.Interrupted,
 		telegramBotsJSONBytes, cfg.Telegram.ListenAddr,
-		cfg.Auth.JWTSecret, cfg.Auth.JWTIssuer, membershipsJSON,
+		"", "", "[]", // Auth fields no longer used - mtfpass URL is from config file
 		cfg.Context.MaxTokens, cfg.Context.CompactionThreshold, cfg.Context.PreserveRecentTurns, cfg.Context.CompactionAgentType,
 		cfg.RAG.Enabled, cfg.RAG.DefaultTopK, cfg.RAG.AutoRetrieve.Enabled, cfg.RAG.AutoRetrieve.OnLLMCall, cfg.RAG.AutoRetrieve.TopK, cfg.RAG.AutoRetrieve.MaxResults, cfg.RAG.MinSimilarity,
 		updatedBy,

@@ -2,99 +2,108 @@ package auth
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"strings"
+	"net/http"
 	"time"
 
 	"github.com/hulipa487/catgirl/internal/config"
-	"github.com/hulipa487/catgirl/internal/models"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
 
 type AuthService struct {
 	config *config.AuthConfig
 	logger zerolog.Logger
+	httpClient *http.Client
 }
 
 func NewAuthService(cfg *config.AuthConfig, logger zerolog.Logger) *AuthService {
 	return &AuthService{
 		config: cfg,
 		logger: logger,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
 	}
 }
 
-type TokenClaims struct {
-	UserID       string                  `json:"sub"`
-	Email       string                  `json:"email"`
-	Membership   models.MembershipLevel `json:"membership"`
-	SessionID    uuid.UUID               `json:"session_id"`
-	Permissions []string                `json:"permissions"`
-	jwt.RegisteredClaims
+type MTFPassUser struct {
+	UID      int64  `json:"uid"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	Credits  int    `json:"credits"`
 }
 
-func (s *AuthService) ValidateJWT(tokenString string) (*TokenClaims, error) {
-	tokenString = strings.TrimPrefix(tokenString, "Bearer ")
+type MTFPassResponse struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
 
-	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(s.config.JWTSecret), nil
-	})
+// ValidateToken calls mtfpass /api/v1/auth/check to validate the JWT token
+// Returns the user info if valid, error otherwise
+// Only role "admin" is allowed - returns error for "user" and other roles
+func (s *AuthService) ValidateToken(ctx context.Context, tokenString string) (*MTFPassUser, error) {
+	if s.config.MTFPassURL == "" {
+		return nil, fmt.Errorf("mtfpass_url not configured")
+	}
 
+	req, err := http.NewRequestWithContext(ctx, "GET", s.config.MTFPassURL+"/api/v1/auth/check", nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse token: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	claims, ok := token.Claims.(*TokenClaims)
-	if !ok || !token.Valid {
-		return nil, errors.New("invalid token")
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "mtf_auth", Value: tokenString})
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call mtfpass: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("mtfpass returned status %d", resp.StatusCode)
 	}
 
-	if claims.ExpiresAt != nil && claims.ExpiresAt.Time.Before(time.Now()) {
-		return nil, errors.New("token expired")
+	var mtfResp MTFPassResponse
+	if err := json.NewDecoder(resp.Body).Decode(&mtfResp); err != nil {
+		return nil, fmt.Errorf("failed to decode mtfpass response: %w", err)
 	}
 
-	return claims, nil
+	if !mtfResp.Success {
+		return nil, fmt.Errorf("mtfpass auth failed: %s", mtfResp.Error)
+	}
+
+	// Parse the data field into MTFPassUser
+	dataBytes, err := json.Marshal(mtfResp.Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal mtfpass data: %w", err)
+	}
+
+	var user MTFPassUser
+	if err := json.Unmarshal(dataBytes, &user); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mtfpass user: %w", err)
+	}
+
+	// Only allow role "admin" - reject "user" and any other role
+	if user.Role != "admin" {
+		return nil, fmt.Errorf("access denied: role '%s' is not allowed", user.Role)
+	}
+
+	return &user, nil
 }
 
-func (s *AuthService) GetMembershipPriority(membership models.MembershipLevel) float64 {
-	switch membership {
-	case models.MembershipFree:
-		return 0
-	case models.MembershipBasic:
-		return 0.5
-	case models.MembershipPro:
-		return 1.0
-	case models.MembershipEnterprise:
-		return 2.0
-	default:
-		return 0
-	}
-}
-
-func (s *AuthService) CheckPermission(claims *TokenClaims, permission string) bool {
-	for _, p := range claims.Permissions {
-		if p == permission || p == "*" {
-			return true
-		}
-	}
-	return false
-}
-
+// AuthorizationResult represents the result of authorization
 type AuthorizationResult struct {
 	Authorized bool
-	UserID    string
-	SessionID uuid.UUID
-	Membership models.MembershipLevel
-	Reason    string
+	UserID     string
+	Reason     string
 }
 
+// Authorize validates the token and returns the authorization result
 func (s *AuthService) Authorize(ctx context.Context, tokenString string) (*AuthorizationResult, error) {
-	claims, err := s.ValidateJWT(tokenString)
+	user, err := s.ValidateToken(ctx, tokenString)
 	if err != nil {
 		return &AuthorizationResult{
 			Authorized: false,
@@ -102,30 +111,8 @@ func (s *AuthService) Authorize(ctx context.Context, tokenString string) (*Autho
 		}, nil
 	}
 
-	if !s.isMembershipAllowed(claims.Membership) {
-		return &AuthorizationResult{
-			Authorized: false,
-			Reason:    fmt.Sprintf("membership %s not allowed", claims.Membership),
-		}, nil
-	}
-
 	return &AuthorizationResult{
 		Authorized: true,
-		UserID:    claims.UserID,
-		SessionID: claims.SessionID,
-		Membership: claims.Membership,
+		UserID:    fmt.Sprintf("%d", user.UID),
 	}, nil
-}
-
-func (s *AuthService) isMembershipAllowed(membership models.MembershipLevel) bool {
-	if len(s.config.AllowedMemberships) == 0 {
-		return true
-	}
-
-	for _, allowed := range s.config.AllowedMemberships {
-		if string(allowed) == string(membership) {
-			return true
-		}
-	}
-	return false
 }

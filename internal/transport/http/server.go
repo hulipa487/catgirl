@@ -9,6 +9,7 @@ import (
 
 	"github.com/hulipa487/catgirl/internal/config"
 	"github.com/hulipa487/catgirl/internal/runtime"
+	"github.com/hulipa487/catgirl/internal/services/auth"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 )
@@ -19,6 +20,7 @@ type Server struct {
 	runtime        *runtime.RuntimeCoordinator
 	config         *config.Config
 	logger         zerolog.Logger
+	authService    *auth.AuthService
 }
 
 func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolog.Logger) *Server {
@@ -28,24 +30,32 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 	apiRouter.Use(requestLogger(logger))
 
 	handlers := NewHandlers(rt, cfg, logger)
+	authSvc := auth.NewAuthService(&cfg.RuntimeSeed.Auth, logger)
 
+	// Public endpoints (no auth required)
 	apiRouter.GET("/health", handlers.HealthCheck)
 	apiRouter.GET("/health/detailed", handlers.GetHealth)
-	apiRouter.GET("/api/v1/sessions", handlers.ListSessions)
-	apiRouter.GET("/api/v1/sessions/:session_id", handlers.GetSession)
-	apiRouter.GET("/api/v1/tasks", handlers.ListTasks)
-	apiRouter.GET("/api/v1/tasks/:instance_id", handlers.GetTask)
-	apiRouter.GET("/api/v1/queue/status", handlers.GetQueueStatus)
-	apiRouter.GET("/api/v1/agents", handlers.ListAgents)
-	apiRouter.GET("/api/v1/agents/pool/status", handlers.GetAgentPoolStatus)
-	apiRouter.GET("/api/v1/snapshots", handlers.ListSnapshots)
-	apiRouter.GET("/api/v1/usage/summary", handlers.GetUsageSummary)
-	apiRouter.GET("/api/v1/memory/search", handlers.SearchMemory)
-	apiRouter.GET("/api/v1/metrics", handlers.GetSystemMetrics)
 
-	apiRouter.GET("/api/v1/config", handlers.GetConfig)
-	apiRouter.PUT("/api/v1/config", handlers.UpdateConfig)
-	apiRouter.GET("/api/v1/tools", handlers.ListTools)
+	// Protected endpoints - require admin authentication
+	protected := apiRouter.Group("")
+	protected.Use(authMiddleware(authSvc))
+	{
+		protected.GET("/api/v1/sessions", handlers.ListSessions)
+		protected.GET("/api/v1/sessions/:session_id", handlers.GetSession)
+		protected.GET("/api/v1/tasks", handlers.ListTasks)
+		protected.GET("/api/v1/tasks/:instance_id", handlers.GetTask)
+		protected.GET("/api/v1/queue/status", handlers.GetQueueStatus)
+		protected.GET("/api/v1/agents", handlers.ListAgents)
+		protected.GET("/api/v1/agents/pool/status", handlers.GetAgentPoolStatus)
+		protected.GET("/api/v1/snapshots", handlers.ListSnapshots)
+		protected.GET("/api/v1/usage/summary", handlers.GetUsageSummary)
+		protected.GET("/api/v1/memory/search", handlers.SearchMemory)
+		protected.GET("/api/v1/metrics", handlers.GetSystemMetrics)
+
+		protected.GET("/api/v1/config", handlers.GetConfig)
+		protected.PUT("/api/v1/config", handlers.UpdateConfig)
+		protected.GET("/api/v1/tools", handlers.ListTools)
+	}
 
 	// API static files for admin panel (Vue.js frontend)
 	apiRouter.StaticFS("/admin", http.Dir("web/admin/dist"))
@@ -88,9 +98,43 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 			WriteTimeout: 30 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		},
-		runtime: rt,
-		config:  cfg,
-		logger:  logger,
+		runtime:     rt,
+		config:      cfg,
+		logger:      logger,
+		authService: authSvc,
+	}
+}
+
+// authMiddleware validates the mtfpass JWT cookie and requires admin role
+func authMiddleware(authSvc *auth.AuthService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get mtf_auth cookie
+		cookie, err := c.Cookie("mtf_auth")
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "missing authentication cookie",
+			})
+			return
+		}
+
+		// Validate token with mtfpass - only admin role is allowed
+		result, err := authSvc.Authorize(c.Request.Context(), cookie)
+		if err != nil || !result.Authorized {
+			reason := "authentication failed"
+			if result != nil && result.Reason != "" {
+				reason = result.Reason
+			}
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   reason,
+			})
+			return
+		}
+
+		// Store user ID in context for later use
+		c.Set("user_id", result.UserID)
+		c.Next()
 	}
 }
 

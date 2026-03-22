@@ -70,9 +70,8 @@ host = "0.0.0.0"
 port = 8080
 
 [auth]
-jwt_secret = "your_jwt_secret_here"
-jwt_issuer = "catgirl-runtime"
-allowed_memberships = ["free", "basic", "pro", "enterprise"]
+# MTFPass authentication URL (only admin role is allowed to login)
+mtfpass_url = "https://auth.mtf.edu.ci"
 
 [context]
 max_tokens = 128000

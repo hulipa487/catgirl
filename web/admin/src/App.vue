@@ -1,5 +1,23 @@
 <template>
-  <div class="container-fluid p-0">
+  <!-- Loading / Auth Screen -->
+  <div v-if="isLoading" class="d-flex justify-content-center align-items-center vh-100 bg-light">
+    <div class="text-center">
+      <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+      <p class="text-muted">Checking authentication...</p>
+    </div>
+  </div>
+
+  <div v-else-if="!isAuthenticated" class="d-flex justify-content-center align-items-center vh-100 bg-light">
+    <div class="text-center">
+      <i class="bi bi-lock fs-1 text-muted mb-3"></i>
+      <p class="text-muted">Redirecting to login...</p>
+      <button @click="redirectToLogin" class="btn btn-primary">Go to Login</button>
+    </div>
+  </div>
+
+  <div v-else class="container-fluid p-0">
     <div class="row g-0">
       <!-- Sidebar -->
       <div class="col-md-3 col-lg-2 d-md-block bg-white sidebar py-4">
@@ -576,6 +594,8 @@ const health = ref<any>(null)
 const sessions = ref<any[]>([])
 const saving = ref(false)
 const activeTab = ref('dashboard')
+const isAuthenticated = ref(false)
+const isLoading = ref(true)
 
 const availableTools = ref<string[]>([])
 
@@ -591,6 +611,27 @@ const showToast = (id: string) => {
 
 let healthInterval: any;
 
+// Check authentication by trying to fetch config
+// If 401/403, redirect to mtfpass login
+const checkAuth = async (): Promise<boolean> => {
+  try {
+    const res = await fetch('/api/v1/config', {
+      credentials: 'include'
+    })
+    if (!res.ok) {
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+const redirectToLogin = () => {
+  const currentUrl = window.location.origin + window.location.pathname
+  window.location.href = `https://auth.mtf.edu.ci/auth/login?origin=${encodeURIComponent(currentUrl)}`
+}
+
 // Helper functions
 const formatNumber = (num: any): string => {
   if (num === null || num === undefined) return '0'
@@ -605,7 +646,13 @@ const formatDate = (dateStr: string): string => {
 
 const fetchSessions = async () => {
   try {
-    const res = await fetch('/api/v1/sessions')
+    const res = await fetch('/api/v1/sessions', {
+      credentials: 'include'
+    })
+    if (!res.ok) {
+      redirectToLogin()
+      return
+    }
     const data = await res.json()
     sessions.value = data.sessions || []
   } catch (err) {
@@ -615,7 +662,13 @@ const fetchSessions = async () => {
 
 const fetchConfig = async () => {
   try {
-    const res = await fetch('/api/v1/config')
+    const res = await fetch('/api/v1/config', {
+      credentials: 'include'
+    })
+    if (!res.ok) {
+      redirectToLogin()
+      return
+    }
     const data = await res.json()
     config.value = data.config
 
@@ -658,6 +711,7 @@ const saveConfig = async () => {
     const res = await fetch('/api/v1/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(config.value)
     })
 
@@ -665,6 +719,9 @@ const saveConfig = async () => {
       const err = await res.json()
       document.getElementById('errorToastMessage')!.innerText = err.error || 'Failed to save configuration.'
       showToast('errorToast')
+      if (res.status === 401 || res.status === 403) {
+        redirectToLogin()
+      }
     } else {
       showToast('saveToast')
     }
@@ -709,7 +766,13 @@ const addLLMProvider = (listName: string) => {
 
 const fetchTools = async () => {
   try {
-    const res = await fetch('/api/v1/tools')
+    const res = await fetch('/api/v1/tools', {
+      credentials: 'include'
+    })
+    if (!res.ok) {
+      redirectToLogin()
+      return
+    }
     const data = await res.json()
     availableTools.value = data.tools || []
   } catch (err) {
@@ -717,7 +780,17 @@ const fetchTools = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  isLoading.value = true
+
+  // Check authentication first
+  const authed = await checkAuth()
+  if (!authed) {
+    redirectToLogin()
+    return
+  }
+
+  isAuthenticated.value = true
   fetchConfig()
   fetchHealth()
   fetchSessions()
