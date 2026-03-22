@@ -45,24 +45,14 @@ func (h *Handlers) UpdateConfig(c *gin.Context) {
 		return
 	}
 
-	// Update the database
 	ctx := c.Request.Context()
 	repo := h.runtime.GetRepository()
 
-	configBytes, err := json.Marshal(newConfig)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal config"})
+	if err := repo.UpdateRuntimeConfig(ctx, &newConfig, "admin_api"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update config in database: " + err.Error()})
 		return
 	}
 
-	if err := repo.UpdateRuntimeConfig(ctx, configBytes, "admin_api"); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update config in database"})
-		return
-	}
-
-	// Note: We are updating the struct in memory here but realistically the services
-	// need to be completely rebooted or actively watch this struct for changes.
-	// For now, this just updates the in-memory pointer for subsequent calls
 	h.config.RuntimeSeed = newConfig
 
 	c.JSON(http.StatusOK, gin.H{

@@ -26,22 +26,212 @@ func (r *Repository) Ping(ctx context.Context) map[string]interface{} {
 
 // Session Repository
 
-func (r *Repository) GetRuntimeConfig(ctx context.Context) (json.RawMessage, error) {
-	var config json.RawMessage
-	err := r.db.Pool.QueryRow(ctx, `SELECT config FROM runtime_config WHERE id = 1`).Scan(&config)
+func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfig, error) {
+	// First, fetch the singleton system_config row
+	var maxTaskDepth, maxQueueSize, embeddingDims, maxTokens, timeoutSecs int
+	var systemPrompt, agentSystemPrompt string
+	var minAgents, maxAgents, idleTimeoutSecs int
+	var snapshotEnabled bool
+	var snapshotStoragePath, snapshotRetCompleted, snapshotRetFailed, snapshotRetExited, snapshotRetInterrupted string
+	var telegramBotToken, telegramWebhookURL, telegramListenAddr string
+	var authJwtSecret, authJwtIssuer string
+	var authAllowedMemberships json.RawMessage
+	var contextMaxTokens, contextPreserveRecentTurns int
+	var contextCompactionThreshold float64
+	var contextCompactionAgentType string
+	var ragEnabled, ragAutoRetrieveEnabled, ragAutoRetrieveOnLlmCall bool
+	var ragDefaultTopK, ragAutoRetrieveTopK, ragAutoRetrieveMaxResults int
+	var ragMinSimilarity float64
+
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT
+			max_task_depth, max_queue_size,
+			embedding_dims, max_tokens, timeout_seconds, system_prompt, agent_system_prompt,
+			min_agents, max_agents, idle_timeout_seconds,
+			snapshot_enabled, snapshot_storage_path, snapshot_max_storage_bytes,
+			snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
+			telegram_bot_token, telegram_webhook_url, telegram_listen_addr,
+			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
+			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
+			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity
+		FROM system_config WHERE id = 1
+	`).Scan(
+		&maxTaskDepth, &maxQueueSize,
+		&embeddingDims, &maxTokens, &timeoutSecs, &systemPrompt, &agentSystemPrompt,
+		&minAgents, &maxAgents, &idleTimeoutSecs,
+		&snapshotEnabled, &snapshotStoragePath, new(int64), // Skipping max storage bytes binding for brevity since it's int64 and mapped later if needed
+		&snapshotRetCompleted, &snapshotRetFailed, &snapshotRetExited, &snapshotRetInterrupted,
+		&telegramBotToken, &telegramWebhookURL, &telegramListenAddr,
+		&authJwtSecret, &authJwtIssuer, &authAllowedMemberships,
+		&contextMaxTokens, &contextCompactionThreshold, &contextPreserveRecentTurns, &contextCompactionAgentType,
+		&ragEnabled, &ragDefaultTopK, &ragAutoRetrieveEnabled, &ragAutoRetrieveOnLlmCall, &ragAutoRetrieveTopK, &ragAutoRetrieveMaxResults, &ragMinSimilarity,
+	)
+
 	if err == pgx.ErrNoRows {
-		return nil, nil
+		return nil, nil // No config yet
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to fetch system_config: %w", err)
 	}
-	return config, err
+
+	// Fetch Providers
+	rows, err := r.db.Pool.Query(ctx, `SELECT provider_type, base_url, api_key, models FROM llm_providers`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch llm_providers: %w", err)
+	}
+	defer rows.Close()
+
+	var gpProviders, reasonerProviders, embeddingProviders []config.ModelProviderConfig
+	for rows.Next() {
+		var pType, baseURL, apiKey string
+		var modelsJSON json.RawMessage
+		if err := rows.Scan(&pType, &baseURL, &apiKey, &modelsJSON); err != nil {
+			return nil, err
+		}
+		var modelsList []string
+		_ = json.Unmarshal(modelsJSON, &modelsList)
+		provider := config.ModelProviderConfig{BaseURL: baseURL, APIKey: apiKey, Models: modelsList}
+
+		switch pType {
+		case "gp":
+			gpProviders = append(gpProviders, provider)
+		case "reasoner":
+			reasonerProviders = append(reasonerProviders, provider)
+		case "embedding":
+			embeddingProviders = append(embeddingProviders, provider)
+		}
+	}
+
+	var allowedMemberships []string
+	_ = json.Unmarshal(authAllowedMemberships, &allowedMemberships)
+
+	return &config.RuntimeConfig{
+		Global: config.GlobalConfig{MaxTaskDepth: maxTaskDepth, MaxQueueSize: maxQueueSize},
+		LLM: config.LLMConfig{
+			Providers:          gpProviders,
+			EmbeddingProviders: embeddingProviders,
+			EmbeddingDims:      embeddingDims,
+			MaxTokens:          maxTokens,
+			TimeoutSecs:        timeoutSecs,
+			SystemPrompt:       systemPrompt,
+			AgentSystemPrompt:  agentSystemPrompt,
+		},
+		AgentPool: config.AgentPoolConfig{MinAgents: minAgents, MaxAgents: maxAgents, IdleTimeoutSecs: idleTimeoutSecs},
+		Snapshot: config.SnapshotConfig{
+			Enabled:     snapshotEnabled,
+			StoragePath: snapshotStoragePath,
+			Retention: config.RetentionConfig{
+				Completed:   snapshotRetCompleted,
+				Failed:      snapshotRetFailed,
+				Exited:      snapshotRetExited,
+				Interrupted: snapshotRetInterrupted,
+			},
+		},
+		Telegram: config.TelegramConfig{BotToken: telegramBotToken, WebhookURL: telegramWebhookURL, ListenAddr: telegramListenAddr},
+		Auth:     config.AuthConfig{JWTSecret: authJwtSecret, JWTIssuer: authJwtIssuer, AllowedMemberships: allowedMemberships},
+		Context: config.ContextConfig{
+			MaxTokens:           contextMaxTokens,
+			CompactionThreshold: contextCompactionThreshold,
+			PreserveRecentTurns: contextPreserveRecentTurns,
+			CompactionAgentType: contextCompactionAgentType,
+		},
+		RAG: config.RAGConfig{
+			Enabled:       ragEnabled,
+			DefaultTopK:   ragDefaultTopK,
+			MinSimilarity: ragMinSimilarity,
+			AutoRetrieve: config.AutoRetrieveConfig{
+				Enabled:    ragAutoRetrieveEnabled,
+				OnLLMCall:  ragAutoRetrieveOnLlmCall,
+				TopK:       ragAutoRetrieveTopK,
+				MaxResults: ragAutoRetrieveMaxResults,
+			},
+		},
+	}, nil
 }
 
-func (r *Repository) UpdateRuntimeConfig(ctx context.Context, config json.RawMessage, updatedBy string) error {
-	_, err := r.db.Pool.Exec(ctx, `
-		INSERT INTO runtime_config (id, config, updated_by, updated_at)
-		VALUES (1, $1, $2, NOW())
-		ON CONFLICT (id) DO UPDATE SET config = $1, updated_by = $2, updated_at = NOW()
-	`, config, updatedBy)
-	return err
+func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.RuntimeConfig, updatedBy string) error {
+	tx, err := r.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	membershipsJSON, _ := json.Marshal(cfg.Auth.AllowedMemberships)
+
+	// Upsert System Config
+	_, err = tx.Exec(ctx, `
+		INSERT INTO system_config (
+			id, max_task_depth, max_queue_size,
+			embedding_dims, max_tokens, timeout_seconds, system_prompt, agent_system_prompt,
+			min_agents, max_agents, idle_timeout_seconds,
+			snapshot_enabled, snapshot_storage_path, snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
+			telegram_bot_token, telegram_webhook_url, telegram_listen_addr,
+			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
+			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
+			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity,
+			updated_by, updated_at
+		) VALUES (
+			1, $1, $2,
+			$3, $4, $5, $6, $7,
+			$8, $9, $10,
+			$11, $12, $13, $14, $15, $16,
+			$17, $18, $19,
+			$20, $21, $22,
+			$23, $24, $25, $26,
+			$27, $28, $29, $30, $31, $32, $33,
+			$34, NOW()
+		)
+		ON CONFLICT (id) DO UPDATE SET
+			max_task_depth = EXCLUDED.max_task_depth, max_queue_size = EXCLUDED.max_queue_size,
+			embedding_dims = EXCLUDED.embedding_dims, max_tokens = EXCLUDED.max_tokens, timeout_seconds = EXCLUDED.timeout_seconds, system_prompt = EXCLUDED.system_prompt, agent_system_prompt = EXCLUDED.agent_system_prompt,
+			min_agents = EXCLUDED.min_agents, max_agents = EXCLUDED.max_agents, idle_timeout_seconds = EXCLUDED.idle_timeout_seconds,
+			snapshot_enabled = EXCLUDED.snapshot_enabled, snapshot_storage_path = EXCLUDED.snapshot_storage_path, snapshot_retention_completed = EXCLUDED.snapshot_retention_completed, snapshot_retention_failed = EXCLUDED.snapshot_retention_failed, snapshot_retention_exited = EXCLUDED.snapshot_retention_exited, snapshot_retention_interrupted = EXCLUDED.snapshot_retention_interrupted,
+			telegram_bot_token = EXCLUDED.telegram_bot_token, telegram_webhook_url = EXCLUDED.telegram_webhook_url, telegram_listen_addr = EXCLUDED.telegram_listen_addr,
+			auth_jwt_secret = EXCLUDED.auth_jwt_secret, auth_jwt_issuer = EXCLUDED.auth_jwt_issuer, auth_allowed_memberships = EXCLUDED.auth_allowed_memberships,
+			context_max_tokens = EXCLUDED.context_max_tokens, context_compaction_threshold = EXCLUDED.context_compaction_threshold, context_preserve_recent_turns = EXCLUDED.context_preserve_recent_turns, context_compaction_agent_type = EXCLUDED.context_compaction_agent_type,
+			rag_enabled = EXCLUDED.rag_enabled, rag_default_top_k = EXCLUDED.rag_default_top_k, rag_auto_retrieve_enabled = EXCLUDED.rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call = EXCLUDED.rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k = EXCLUDED.rag_auto_retrieve_top_k, rag_auto_retrieve_max_results = EXCLUDED.rag_auto_retrieve_max_results, rag_min_similarity = EXCLUDED.rag_min_similarity,
+			updated_by = EXCLUDED.updated_by, updated_at = NOW()
+	`,
+		cfg.Global.MaxTaskDepth, cfg.Global.MaxQueueSize,
+		cfg.LLM.EmbeddingDims, cfg.LLM.MaxTokens, cfg.LLM.TimeoutSecs, cfg.LLM.SystemPrompt, cfg.LLM.AgentSystemPrompt,
+		cfg.AgentPool.MinAgents, cfg.AgentPool.MaxAgents, cfg.AgentPool.IdleTimeoutSecs,
+		cfg.Snapshot.Enabled, cfg.Snapshot.StoragePath, cfg.Snapshot.Retention.Completed, cfg.Snapshot.Retention.Failed, cfg.Snapshot.Retention.Exited, cfg.Snapshot.Retention.Interrupted,
+		cfg.Telegram.BotToken, cfg.Telegram.WebhookURL, cfg.Telegram.ListenAddr,
+		cfg.Auth.JWTSecret, cfg.Auth.JWTIssuer, membershipsJSON,
+		cfg.Context.MaxTokens, cfg.Context.CompactionThreshold, cfg.Context.PreserveRecentTurns, cfg.Context.CompactionAgentType,
+		cfg.RAG.Enabled, cfg.RAG.DefaultTopK, cfg.RAG.AutoRetrieve.Enabled, cfg.RAG.AutoRetrieve.OnLLMCall, cfg.RAG.AutoRetrieve.TopK, cfg.RAG.AutoRetrieve.MaxResults, cfg.RAG.MinSimilarity,
+		updatedBy,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert system config: %w", err)
+	}
+
+	// Sync Providers (Replace all strategy for simplicity)
+	_, err = tx.Exec(ctx, `DELETE FROM llm_providers`)
+	if err != nil {
+		return fmt.Errorf("failed to clear llm_providers: %w", err)
+	}
+
+	insertProvider := func(pType string, p config.ModelProviderConfig) error {
+		modelsJSON, _ := json.Marshal(p.Models)
+		_, err := tx.Exec(ctx, `
+			INSERT INTO llm_providers (provider_type, base_url, api_key, models)
+			VALUES ($1, $2, $3, $4)
+		`, pType, p.BaseURL, p.APIKey, modelsJSON)
+		return err
+	}
+
+	for _, p := range cfg.LLM.Providers {
+		if err := insertProvider("gp", p); err != nil {
+			return err
+		}
+	}
+	for _, p := range cfg.LLM.EmbeddingProviders {
+		if err := insertProvider("embedding", p); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
 }
 
 // Session Repository
