@@ -162,44 +162,43 @@ func (rc *RuntimeCoordinator) workerLoop(workerID int) {
 			logger.Debug().Msg("worker stopping")
 			return
 
-		default:
-			// Try to get an idle agent, or spawn one if under capacity
-			agent := rc.agentPool.GetIdleAgent("")
-			if agent == nil {
-				// Try to spawn a new agent
-				spawnedAgent, err := rc.agentPool.SpawnAgent(context.Background(), models.AgentTypeGeneralPurpose)
-				if err != nil {
-					// At max capacity or other error, wait and retry
-					logger.Debug().Err(err).Msg("could not spawn agent, waiting...")
-					time.Sleep(2 * time.Second)
-					continue
-				}
-				agent = spawnedAgent
-				logger.Info().Str("agent_id", agent.ID).Msg("spawned new agent")
-			}
+		case <-time.After(1 * time.Second):
+			// Periodic check for tasks - helps prevent tight looping
+		}
 
-			// Try to dequeue a task
-			taskInstance := rc.taskQueue.Dequeue("")
-			if taskInstance == nil {
-				// No tasks available, wait before trying again
-				time.Sleep(1 * time.Second)
+		// Check if there's a task available
+		taskInstance := rc.taskQueue.Dequeue("")
+		if taskInstance == nil {
+			// No tasks available, loop back and wait
+			continue
+		}
+
+		// Get or spawn an agent
+		agent := rc.agentPool.GetIdleAgent("")
+		if agent == nil {
+			// Try to spawn a new agent
+			spawnedAgent, err := rc.agentPool.SpawnAgent(context.Background(), models.AgentTypeGeneralPurpose)
+			if err != nil {
+				// At max capacity - re-enqueue the task and wait
+				rc.taskQueue.Enqueue(taskInstance)
+				logger.Debug().Err(err).Msg("could not spawn agent, re-enqueueing task and waiting...")
 				continue
 			}
-
-			logger.Debug().
-				Str("instance_id", taskInstance.InstanceID.String()).
-				Str("agent_id", agent.ID).
-				Msg("worker picked up task")
-
-			// Execute task - this runs the agent's main loop
-			if err := rc.executeTask(agent, taskInstance); err != nil {
-				logger.Error().Err(err).Str("instance_id", taskInstance.InstanceID.String()).Msg("task execution failed")
-			}
-
-			// Agent is done (either completed or blocked waiting for input)
-			// Mark as idle so it can pick up new tasks
-			agent.Status = models.AgentStatusIdle
+			agent = spawnedAgent
+			logger.Info().Str("agent_id", agent.ID).Msg("spawned new agent")
 		}
+
+		logger.Debug().
+			Str("instance_id", taskInstance.InstanceID.String()).
+			Str("agent_id", agent.ID).
+			Msg("worker picked up task")
+
+		// Execute task - blocks until agent finishes (COMPLETED/FAILED) or SendInput fails
+		if err := rc.executeTask(agent, taskInstance); err != nil {
+			logger.Error().Err(err).Str("instance_id", taskInstance.InstanceID.String()).Msg("task execution failed")
+		}
+		// Always mark agent as idle after executeTask returns, so it can be reused
+		agent.Status = models.AgentStatusIdle
 	}
 }
 
@@ -249,7 +248,10 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 		Type:    "task_start",
 		Content: taskInstance.Description,
 	}
-	workerAgent.SendInput(initialInput)
+	if !workerAgent.SendInput(initialInput) {
+		logger.Error().Msg("Failed to send initial input to agent (queue full)")
+		return fmt.Errorf("agent queue full")
+	}
 
 	// Run the agent's main loop - this blocks until agent signals "free" state
 	return rc.runAgentLoop(workerAgent, taskInstance, session, logger)
