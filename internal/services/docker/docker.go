@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/moby/moby/api/types"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
