@@ -426,7 +426,8 @@ func (r *Repository) ScanWorkingMemoryBySession(ctx context.Context, sessionID u
 		SELECT wm.agent_id, wm.key, wm.value, wm.created_at, wm.updated_at
 		FROM working_memory wm
 		JOIN task_instances ti ON wm.agent_id = ti.assigned_agent_id
-		WHERE ti.session_id = $1
+		JOIN task_families tf ON ti.task_id = tf.task_id
+		WHERE tf.session_id = $1
 	`, sessionID)
 	if err != nil {
 		return nil, err
