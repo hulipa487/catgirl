@@ -162,43 +162,36 @@ func (rc *RuntimeCoordinator) workerLoop(workerID int) {
 			logger.Debug().Msg("worker stopping")
 			return
 
-		case <-time.After(1 * time.Second):
-			// Periodic check for tasks - helps prevent tight looping
-		}
+		default:
+			// Check if there's a task available
+			taskInstance := rc.taskQueue.Dequeue("")
+			if taskInstance == nil {
+				// No tasks available, wait before trying again
+				time.Sleep(1 * time.Second)
+				continue
+			}
 
-		// Check if there's a task available
-		taskInstance := rc.taskQueue.Dequeue("")
-		if taskInstance == nil {
-			// No tasks available, loop back and wait
-			continue
-		}
-
-		// Get or spawn an agent
-		agent := rc.agentPool.GetIdleAgent("")
-		if agent == nil {
-			// Try to spawn a new agent
-			spawnedAgent, err := rc.agentPool.SpawnAgent(context.Background(), models.AgentTypeGeneralPurpose)
+			// Spawn a new agent (agents are removed after task completion)
+			agent, err := rc.agentPool.SpawnAgent(context.Background(), models.AgentTypeGeneralPurpose)
 			if err != nil {
 				// At max capacity - re-enqueue the task and wait
 				rc.taskQueue.Enqueue(taskInstance)
 				logger.Debug().Err(err).Msg("could not spawn agent, re-enqueueing task and waiting...")
+				time.Sleep(1 * time.Second)
 				continue
 			}
-			agent = spawnedAgent
-			logger.Info().Str("agent_id", agent.ID).Msg("spawned new agent")
-		}
+			logger.Info().Str("agent_id", agent.ID).Str("instance_id", taskInstance.InstanceID.String()).Msg("spawned new agent for task")
 
-		logger.Debug().
-			Str("instance_id", taskInstance.InstanceID.String()).
-			Str("agent_id", agent.ID).
-			Msg("worker picked up task")
+			// Execute task - blocks until agent finishes (COMPLETED/FAILED) or SendInput fails
+			if err := rc.executeTask(agent, taskInstance); err != nil {
+				logger.Error().Err(err).Str("instance_id", taskInstance.InstanceID.String()).Msg("task execution failed")
+			}
 
-		// Execute task - blocks until agent finishes (COMPLETED/FAILED) or SendInput fails
-		if err := rc.executeTask(agent, taskInstance); err != nil {
-			logger.Error().Err(err).Str("instance_id", taskInstance.InstanceID.String()).Msg("task execution failed")
+			// Remove the agent after task completion since LLMs are stateless
+			if rmErr := rc.agentPool.RemoveAgent(context.Background(), agent.ID); rmErr != nil {
+				logger.Warn().Err(rmErr).Str("agent_id", agent.ID).Msg("failed to remove agent")
+			}
 		}
-		// Always mark agent as idle after executeTask returns, so it can be reused
-		agent.Status = models.AgentStatusIdle
 	}
 }
 
@@ -276,7 +269,7 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		case "task_start":
 			// Initial task description
 			msg.Role = "user"
-			msg.Content = fmt.Sprintf("You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task. When waiting for async results, use SET_STATE blocking. When done, use SET_STATE free and COMPLETE_TASK or FAIL_TASK.", input.Content)
+			msg.Content = fmt.Sprintf("You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task. Use SET_STATE with BLOCKING when waiting for async results. When done, use SET_STATE with COMPLETED or FAILED.", input.Content)
 
 		case "tool_result":
 			// Async tool callback result
@@ -308,7 +301,8 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		}
 
 		// Call LLM
-		resp, err := rc.llmSvc.ChatWithTools(ctx, rc.config.LLM.GPModel, llmMessages, tools, 0)
+		model := rc.llmSvc.GetRandomGPModel()
+		resp, err := rc.llmSvc.ChatWithTools(ctx, model, llmMessages, tools, 0)
 		if err != nil || len(resp.Choices) == 0 {
 			logger.Error().Err(err).Msg("LLM call failed")
 			return err

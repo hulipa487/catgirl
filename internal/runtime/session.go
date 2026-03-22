@@ -266,7 +266,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 			s.logger.Warn().Msg("No tools loaded from database")
 		}
 
-		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.config.LLM.GPModel, messages, tools, 0)
+		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(), messages, tools, 0)
 
 		if err != nil || len(resp.Choices) == 0 {
 			s.logger.Error().Err(err).Msg("Failed to call LLM for reply")
@@ -277,7 +277,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 
 		// Record usage
 		billingSvc := agent.NewBillingService(s.repo, sessionID, fmt.Sprintf("%d", telegramUserID))
-		_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, s.config.LLM.GPModel, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
+		_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
 
 		// Process Tool Calls (or text response)
 		if len(msg.ToolCalls) > 0 {
@@ -367,14 +367,14 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 			}
 
 			// Follow-up LLM call with tool results
-			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.config.LLM.GPModel, messages, tools, 0)
+			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(), messages, tools, 0)
 			if err != nil || len(resp.Choices) == 0 {
 				s.logger.Error().Err(err).Msg("Failed to call LLM for follow-up")
 				return
 			}
 
 			// Record usage for follow-up call
-			_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, s.config.LLM.GPModel, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
+			_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
 
 			msg = resp.Choices[0].Message
 

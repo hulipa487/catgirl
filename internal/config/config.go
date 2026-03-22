@@ -27,11 +27,8 @@ type Config struct {
 }
 
 type GlobalConfig struct {
-	MaxTaskDepth               int     `mapstructure:"max_task_depth"`
-	MaxQueueSize               int     `mapstructure:"max_queue_size"`
-	ContainerCleanupDelaySecs  int     `mapstructure:"container_cleanup_delay_seconds"`
-	SnapshotEnabled            bool    `mapstructure:"snapshot_enabled"`
-	SessionTimeoutSecs         int     `mapstructure:"session_timeout_seconds"`
+	MaxTaskDepth int `mapstructure:"max_task_depth"`
+	MaxQueueSize int `mapstructure:"max_queue_size"`
 }
 
 type DatabaseConfig struct {
@@ -50,26 +47,26 @@ func (d DatabaseConfig) DSN() string {
 	)
 }
 
+type ModelProviderConfig struct {
+	BaseURL string   `mapstructure:"base_url"`
+	APIKey  string   `mapstructure:"api_key"`
+	Models  []string `mapstructure:"models"`
+}
+
 type LLMConfig struct {
-	APIKey          string `mapstructure:"api_key"`
-	BaseURL         string `mapstructure:"base_url"`
-	GPModel         string `mapstructure:"gp_model"`
-	ReasonerModel   string `mapstructure:"reasoner_model"`
-	EmbeddingModel  string `mapstructure:"embedding_model"`
-	EmbeddingDims   int    `mapstructure:"embedding_dims"`
-	MaxTokens       int    `mapstructure:"max_tokens"`
-	TimeoutSecs     int    `mapstructure:"timeout_seconds"`
-	SystemPrompt    string `mapstructure:"system_prompt"`
+	GPProviders        []ModelProviderConfig `mapstructure:"gp_providers"`
+	ReasonerProviders  []ModelProviderConfig `mapstructure:"reasoner_providers"`
+	EmbeddingProviders []ModelProviderConfig `mapstructure:"embedding_providers"`
+	EmbeddingDims      int                   `mapstructure:"embedding_dims"`
+	MaxTokens          int                   `mapstructure:"max_tokens"`
+	TimeoutSecs        int                   `mapstructure:"timeout_seconds"`
+	SystemPrompt       string                `mapstructure:"system_prompt"`
 }
 
 type AgentPoolConfig struct {
-	MinAgents           int     `mapstructure:"min_agents"`
-	MaxAgents           int     `mapstructure:"max_agents"`
-	GPAgentRatio        float64 `mapstructure:"gp_agent_ratio"`
-	IdleTimeoutSecs     int     `mapstructure:"idle_timeout_seconds"`
-	MaxTasksPerAgent    int     `mapstructure:"max_tasks_per_agent"`
-	SpawnTimeoutSecs    int     `mapstructure:"spawn_timeout_seconds"`
-	CleanupTimeoutSecs  int     `mapstructure:"cleanup_timeout_seconds"`
+	MinAgents       int `mapstructure:"min_agents"`
+	MaxAgents       int `mapstructure:"max_agents"`
+	IdleTimeoutSecs int `mapstructure:"idle_timeout_seconds"`
 }
 
 type SnapshotConfig struct {
@@ -115,11 +112,10 @@ type ContextConfig struct {
 }
 
 type RAGConfig struct {
-	Enabled         bool    `mapstructure:"enabled"`
-	DefaultTopK     int     `mapstructure:"default_top_k"`
-	EmbeddingModel  string  `mapstructure:"embedding_model"`
-	AutoRetrieve    AutoRetrieveConfig `mapstructure:"auto_retrieve"`
-	MinSimilarity   float64 `mapstructure:"min_similarity"`
+	Enabled      bool               `mapstructure:"enabled"`
+	DefaultTopK  int                `mapstructure:"default_top_k"`
+	AutoRetrieve AutoRetrieveConfig `mapstructure:"auto_retrieve"`
+	MinSimilarity float64          `mapstructure:"min_similarity"`
 }
 
 type AutoRetrieveConfig struct {
@@ -169,20 +165,29 @@ func (c *Config) Validate() error {
 	if c.Database.DBName == "" {
 		return fmt.Errorf("database.dbname is required")
 	}
-	if c.LLM.APIKey == "" {
-		return fmt.Errorf("llm.api_key is required")
+	if len(c.LLM.GPProviders) == 0 {
+		return fmt.Errorf("at least one llm.gp_providers entry is required")
 	}
-	if c.LLM.BaseURL == "" {
-		return fmt.Errorf("llm.base_url is required")
+	for i, p := range c.LLM.GPProviders {
+		if len(p.Models) == 0 {
+			return fmt.Errorf("llm.gp_providers[%d] requires at least one model", i)
+		}
 	}
-	if c.LLM.GPModel == "" {
-		return fmt.Errorf("llm.gp_model is required")
+	if len(c.LLM.ReasonerProviders) == 0 {
+		return fmt.Errorf("at least one llm.reasoner_providers entry is required")
 	}
-	if c.LLM.ReasonerModel == "" {
-		return fmt.Errorf("llm.reasoner_model is required")
+	for i, p := range c.LLM.ReasonerProviders {
+		if len(p.Models) == 0 {
+			return fmt.Errorf("llm.reasoner_providers[%d] requires at least one model", i)
+		}
 	}
-	if c.LLM.EmbeddingModel == "" {
-		return fmt.Errorf("llm.embedding_model is required")
+	if len(c.LLM.EmbeddingProviders) == 0 {
+		return fmt.Errorf("at least one llm.embedding_providers entry is required")
+	}
+	for i, p := range c.LLM.EmbeddingProviders {
+		if len(p.Models) == 0 {
+			return fmt.Errorf("llm.embedding_providers[%d] requires at least one model", i)
+		}
 	}
 	if c.Telegram.BotToken == "" {
 		return fmt.Errorf("telegram.bot_token is required")

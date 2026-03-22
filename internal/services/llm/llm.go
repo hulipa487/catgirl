@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -100,9 +101,9 @@ func NewLLMService(cfg *config.LLMConfig, logger zerolog.Logger) *LLMService {
 	}
 }
 
-func (s *LLMService) ChatWithTools(ctx context.Context, model string, messages []ChatMessage, tools []Tool, maxTokens int) (*ChatResponse, error) {
+func (s *LLMService) ChatWithTools(ctx context.Context, model ModelConfig, messages []ChatMessage, tools []Tool, maxTokens int) (*ChatResponse, error) {
 	reqBody := ChatRequest{
-		Model:     model,
+		Model:     model.Model,
 		Messages:  messages,
 		Tools:     tools,
 		MaxTokens: maxTokens,
@@ -117,14 +118,14 @@ func (s *LLMService) ChatWithTools(ctx context.Context, model string, messages [
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/chat/completions", s.config.BaseURL)
+	url := fmt.Sprintf("%s/chat/completions", model.BaseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.config.APIKey))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", model.APIKey))
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -144,11 +145,11 @@ func (s *LLMService) ChatWithTools(ctx context.Context, model string, messages [
 
 	return &chatResp, nil
 }
-func (s *LLMService) Chat(ctx context.Context, model string, messages []ChatMessage, maxTokens int) (*ChatResponse, error) {
+func (s *LLMService) Chat(ctx context.Context, model ModelConfig, messages []ChatMessage, maxTokens int) (*ChatResponse, error) {
 	return s.ChatWithTools(ctx, model, messages, nil, maxTokens)
 }
 
-func (s *LLMService) ChatSimple(ctx context.Context, model string, systemPrompt, userMessage string) (string, *Usage, error) {
+func (s *LLMService) ChatSimple(ctx context.Context, model ModelConfig, systemPrompt, userMessage string) (string, *Usage, error) {
 	messages := []ChatMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userMessage},
@@ -166,9 +167,9 @@ func (s *LLMService) ChatSimple(ctx context.Context, model string, systemPrompt,
 	return resp.Choices[0].Message.Content, &resp.Usage, nil
 }
 
-func (s *LLMService) Embed(ctx context.Context, texts []string) ([][]float32, *Usage, error) {
+func (s *LLMService) Embed(ctx context.Context, model ModelConfig, texts []string) ([][]float32, *Usage, error) {
 	reqBody := EmbeddingRequest{
-		Model: s.config.EmbeddingModel,
+		Model: model.Model,
 		Input: texts,
 	}
 
@@ -177,14 +178,14 @@ func (s *LLMService) Embed(ctx context.Context, texts []string) ([][]float32, *U
 		return nil, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/embeddings", s.config.BaseURL)
+	url := fmt.Sprintf("%s/embeddings", model.BaseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.config.APIKey))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", model.APIKey))
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -210,8 +211,8 @@ func (s *LLMService) Embed(ctx context.Context, texts []string) ([][]float32, *U
 	return embeddings, &embResp.Usage, nil
 }
 
-func (s *LLMService) EmbedOne(ctx context.Context, text string) ([]float32, error) {
-	embeddings, _, err := s.Embed(ctx, []string{text})
+func (s *LLMService) EmbedOne(ctx context.Context, model ModelConfig, text string) ([]float32, error) {
+	embeddings, _, err := s.Embed(ctx, model, []string{text})
 	if err != nil {
 		return nil, err
 	}
@@ -223,4 +224,49 @@ func (s *LLMService) EmbedOne(ctx context.Context, text string) ([]float32, erro
 
 func (s *LLMService) CountTokens(text string) int {
 	return len(text) / 4
+}
+
+type ModelConfig struct {
+	Model   string
+	BaseURL string
+	APIKey  string
+}
+
+func (s *LLMService) GetRandomGPModel() ModelConfig {
+	if len(s.config.GPProviders) == 0 {
+		return ModelConfig{}
+	}
+	provider := s.config.GPProviders[rand.Intn(len(s.config.GPProviders))]
+	model := provider.Models[rand.Intn(len(provider.Models))]
+	return ModelConfig{
+		Model:   model,
+		BaseURL: provider.BaseURL,
+		APIKey:  provider.APIKey,
+	}
+}
+
+func (s *LLMService) GetRandomReasonerModel() ModelConfig {
+	if len(s.config.ReasonerProviders) == 0 {
+		return ModelConfig{}
+	}
+	provider := s.config.ReasonerProviders[rand.Intn(len(s.config.ReasonerProviders))]
+	model := provider.Models[rand.Intn(len(provider.Models))]
+	return ModelConfig{
+		Model:   model,
+		BaseURL: provider.BaseURL,
+		APIKey:  provider.APIKey,
+	}
+}
+
+func (s *LLMService) GetRandomEmbeddingModel() ModelConfig {
+	if len(s.config.EmbeddingProviders) == 0 {
+		return ModelConfig{}
+	}
+	provider := s.config.EmbeddingProviders[rand.Intn(len(s.config.EmbeddingProviders))]
+	model := provider.Models[rand.Intn(len(provider.Models))]
+	return ModelConfig{
+		Model:   model,
+		BaseURL: provider.BaseURL,
+		APIKey:  provider.APIKey,
+	}
 }
