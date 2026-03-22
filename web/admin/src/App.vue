@@ -611,23 +611,6 @@ const showToast = (id: string) => {
 
 let healthInterval: any;
 
-// Check authentication by trying to call the protected API endpoint
-// The browser will automatically include the mtf_auth cookie (HttpOnly) for same-origin requests
-const checkAuth = async (): Promise<any> => {
-  try {
-    // Try to fetch a protected endpoint - the browser will send the cookie automatically
-    const res = await fetch('/api/v1/config', {
-      credentials: 'include'  // This ensures cookies are sent with the request
-    })
-    if (!res.ok) {
-      return null
-    }
-    return { authenticated: true }
-  } catch {
-    return null
-  }
-}
-
 const redirectToLogin = () => {
   const currentUrl = window.location.origin + window.location.pathname
   window.location.href = `https://auth.mtf.edu.ci/auth/login?origin=${encodeURIComponent(currentUrl)}`
@@ -658,42 +641,6 @@ const fetchSessions = async () => {
     sessions.value = data.sessions || []
   } catch (err) {
     console.error('Failed to fetch sessions', err)
-  }
-}
-
-const fetchConfig = async () => {
-  try {
-    const res = await fetch('/api/v1/config', {
-      credentials: 'include'
-    })
-    if (!res.ok) {
-      redirectToLogin()
-      return
-    }
-    const data = await res.json()
-    config.value = data.config
-
-    // Ensure nested arrays exist so UI doesn't crash
-    if (!config.value.llm) config.value.llm = {}
-    if (!config.value.llm.providers) config.value.llm.providers = []
-    if (!config.value.llm.embedding_providers) config.value.llm.embedding_providers = []
-    if (!config.value.telegram) config.value.telegram = { bots: [], listen_addr: '' }
-    if (!config.value.telegram.bots) config.value.telegram.bots = []
-    if (!config.value.global) config.value.global = {}
-    if (!config.value.agent_pool) config.value.agent_pool = {}
-
-    // Ensure each bot has all required properties (providers are global, not per-bot)
-    config.value.telegram.bots.forEach((bot: any) => {
-      if (!bot.allowed_orchestrator_tools) bot.allowed_orchestrator_tools = []
-      if (!bot.allowed_agent_tools) bot.allowed_agent_tools = []
-      if (!bot.orchestrator_system_prompt) bot.orchestrator_system_prompt = ''
-      if (!bot.agent_system_prompt) bot.agent_system_prompt = ''
-      if (!bot.gp_model) bot.gp_model = ''
-      if (!bot.reasoner_model) bot.reasoner_model = ''
-    })
-
-  } catch (err) {
-    console.error('Failed to fetch config', err)
   }
 }
 
@@ -782,21 +729,53 @@ const fetchTools = async () => {
 }
 
 onMounted(async () => {
-  isLoading.value = true
+  // Try to fetch config - if it works, user is authenticated
+  try {
+    const res = await fetch('/api/v1/config', {
+      credentials: 'include'
+    })
 
-  // Check authentication first
-  const authed = await checkAuth()
-  if (!authed) {
+    if (!res.ok) {
+      redirectToLogin()
+      return
+    }
+
+    const data = await res.json()
+    config.value = data.config
+
+    // Ensure nested arrays exist so UI doesn't crash
+    if (!config.value.llm) config.value.llm = {}
+    if (!config.value.llm.providers) config.value.llm.providers = []
+    if (!config.value.llm.embedding_providers) config.value.llm.embedding_providers = []
+    if (!config.value.telegram) config.value.telegram = { bots: [], listen_addr: '' }
+    if (!config.value.telegram.bots) config.value.telegram.bots = []
+    if (!config.value.global) config.value.global = {}
+    if (!config.value.agent_pool) config.value.agent_pool = {}
+
+    // Ensure each bot has all required properties (providers are global, not per-bot)
+    config.value.telegram.bots.forEach((bot: any) => {
+      if (!bot.allowed_orchestrator_tools) bot.allowed_orchestrator_tools = []
+      if (!bot.allowed_agent_tools) bot.allowed_agent_tools = []
+      if (!bot.orchestrator_system_prompt) bot.orchestrator_system_prompt = ''
+      if (!bot.agent_system_prompt) bot.agent_system_prompt = ''
+      if (!bot.gp_model) bot.gp_model = ''
+      if (!bot.reasoner_model) bot.reasoner_model = ''
+    })
+
+    // Successfully fetched config - user is authenticated
+    isAuthenticated.value = true
+    isLoading.value = false
+
+    // Fetch remaining data
+    fetchHealth()
+    fetchSessions()
+    fetchTools()
+    healthInterval = setInterval(fetchHealth, 5000)
+
+  } catch (err) {
+    console.error('Auth check failed:', err)
     redirectToLogin()
-    return
   }
-
-  isAuthenticated.value = true
-  fetchConfig()
-  fetchHealth()
-  fetchSessions()
-  fetchTools()
-  healthInterval = setInterval(fetchHealth, 5000)
 })
 
 onUnmounted(() => {
