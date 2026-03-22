@@ -388,7 +388,31 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 				case "SPAWN_TASK":
 					desc, _ := args["description"].(string)
 					if desc != "" {
-						subTask, err := rc.taskService.SpawnSubTask(ctx, taskInstance, desc, models.AgentTypeGeneralPurpose, models.PriorityNormal)
+						// Note: We need to figure out the depth of the parent task here
+						// Assuming we can derive it from the context or we might need to fetch the parent task
+						// For now, let's query the DB for the parent task depth
+						parentDepth := 0
+						if tf, _ := rc.repo.GetTaskFamily(ctx, taskInstance.TaskID); tf != nil {
+							// For simplicity, we just use the MaxDepthReached as an approximation,
+							// but properly we should fetch the parent TaskInstance itself
+							// Actually, `taskInstance` IS the parent in this context
+							parentTask, err := rc.repo.GetTaskInstance(ctx, taskInstance.InstanceID)
+							if err == nil && parentTask != nil {
+								// We'll need to count parents manually if depth isn't cached
+								// Let's implement a quick depth counter here
+								current := parentTask
+								for current.ParentInstanceID != nil {
+									parentDepth++
+									parent, _ := rc.repo.GetTaskInstance(ctx, *current.ParentInstanceID)
+									if parent == nil {
+										break
+									}
+									current = parent
+								}
+							}
+						}
+
+						subTask, err := rc.taskService.SpawnSubTask(ctx, taskInstance, desc, models.AgentTypeGeneralPurpose, models.PriorityNormal, parentDepth)
 						if err != nil {
 							toolResult = fmt.Sprintf(`{"error": "failed to spawn task: %s"}`, err.Error())
 						} else {
