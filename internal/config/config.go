@@ -18,19 +18,19 @@ type Config struct {
 	Logging       LoggingConfig  `mapstructure:"logging"`
 
 	// These values act as defaults seeded into the DB on first run
-	RuntimeSeed   RuntimeConfig  `mapstructure:",remain"`
+	RuntimeSeed   RuntimeConfig  `mapstructure:",squash"`
 }
 
 // RuntimeConfig represents all dynamically reloadable config stored in the DB
 type RuntimeConfig struct {
-	Global      GlobalConfig      `json:"global"`
-	LLM         LLMConfig         `json:"llm"`
-	AgentPool   AgentPoolConfig   `json:"agent_pool"`
-	Snapshot    SnapshotConfig     `json:"snapshots"`
-	Telegram    TelegramConfig    `json:"telegram"`
-	Auth        AuthConfig        `json:"auth"`
-	Context     ContextConfig     `json:"context"`
-	RAG         RAGConfig         `json:"rag"`
+	Global      GlobalConfig      `json:"global" mapstructure:"global"`
+	LLM         LLMConfig         `json:"llm" mapstructure:"llm"`
+	AgentPool   AgentPoolConfig   `json:"agent_pool" mapstructure:"agent_pool"`
+	Snapshot    SnapshotConfig     `json:"snapshots" mapstructure:"snapshots"`
+	Telegram    TelegramConfig    `json:"telegram" mapstructure:"telegram"`
+	Auth        AuthConfig        `json:"auth" mapstructure:"auth"`
+	Context     ContextConfig     `json:"context" mapstructure:"context"`
+	RAG         RAGConfig         `json:"rag" mapstructure:"rag"`
 }
 
 type GlobalConfig struct {
@@ -156,10 +156,6 @@ func Load(configPath string) (*Config, error) {
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	if err := v.Unmarshal(&cfg.RuntimeSeed); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal runtime config seed: %w", err)
 	}
 
 	if err := cfg.Validate(); err != nil {
