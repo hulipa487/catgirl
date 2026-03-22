@@ -48,6 +48,7 @@ web/admin/npm-debug.log*
 web/admin/yarn-debug.log*
 web/admin/yarn-error.log*
 web/admin/*.tsbuildinfo
+web/admin/package-lock.json
 
 # Snapshots/storage
 /var/catgirl/

@@ -77,7 +77,7 @@
                       </div>
                     </div>
                   </div>
-                  <button class="btn btn-sm btn-outline-info" @click="addProvider(config.llm.providers)">+ Add Provider</button>
+                  <button class="btn btn-sm btn-outline-info" @click="addProvider('providers')">+ Add Provider</button>
                 </div>
               </div>
 
@@ -216,8 +216,11 @@ const updateModels = (provider: any, val: string) => {
   provider.models = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
 }
 
-const addProvider = (list: any[]) => {
-  list.push({
+const addProvider = (listName: 'providers' | 'reasoner_providers' | 'embedding_providers') => {
+  if (!config.value.llm[listName]) {
+    config.value.llm[listName] = []
+  }
+  config.value.llm[listName].push({
     base_url: 'https://api.openai.com/v1',
     api_key: '',
     models: ['gpt-4o']
