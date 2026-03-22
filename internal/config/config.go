@@ -61,13 +61,14 @@ type ModelProviderConfig struct {
 }
 
 type LLMConfig struct {
-	Providers          []ModelProviderConfig `mapstructure:"providers"`
-	EmbeddingProviders []ModelProviderConfig `mapstructure:"embedding_providers"`
-	EmbeddingDims      int                   `mapstructure:"embedding_dims"`
-	MaxTokens          int                   `mapstructure:"max_tokens"`
-	TimeoutSecs        int                   `mapstructure:"timeout_seconds"`
-	SystemPrompt       string                `mapstructure:"system_prompt"`
-	AgentSystemPrompt  string                `mapstructure:"agent_system_prompt"`
+	Providers          []ModelProviderConfig `mapstructure:"providers" json:"providers"`
+	ReasonerProviders  []ModelProviderConfig `mapstructure:"reasoner_providers" json:"reasoner_providers"`
+	EmbeddingProviders []ModelProviderConfig `mapstructure:"embedding_providers" json:"embedding_providers"`
+	EmbeddingDims      int                   `mapstructure:"embedding_dims" json:"embedding_dims"`
+	MaxTokens          int                   `mapstructure:"max_tokens" json:"max_tokens"`
+	TimeoutSecs        int                   `mapstructure:"timeout_seconds" json:"timeout_seconds"`
+	SystemPrompt       string                `mapstructure:"system_prompt" json:"system_prompt"`
+	AgentSystemPrompt  string                `mapstructure:"agent_system_prompt" json:"agent_system_prompt"`
 }
 
 type AgentPoolConfig struct {
@@ -199,6 +200,14 @@ func (c *RuntimeConfig) Validate() error {
 	for i, p := range c.LLM.Providers {
 		if len(p.Models) == 0 {
 			return fmt.Errorf("llm.providers[%d] requires at least one model", i)
+		}
+	}
+	if len(c.LLM.ReasonerProviders) == 0 {
+		return fmt.Errorf("at least one llm.reasoner_providers entry is required")
+	}
+	for i, p := range c.LLM.ReasonerProviders {
+		if len(p.Models) == 0 {
+			return fmt.Errorf("llm.reasoner_providers[%d] requires at least one model", i)
 		}
 	}
 	if len(c.LLM.EmbeddingProviders) == 0 {
