@@ -12,7 +12,6 @@ import (
 	"github.com/hulipa487/catgirl/internal/repository"
 	"github.com/hulipa487/catgirl/internal/services/agent"
 	"github.com/hulipa487/catgirl/internal/services/llm"
-	"github.com/hulipa487/catgirl/internal/services/mcp"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
