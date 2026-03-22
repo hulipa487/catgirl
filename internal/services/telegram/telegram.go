@@ -31,25 +31,45 @@ type TelegramSession struct {
 }
 
 func NewTelegramService(cfg *config.TelegramConfig, repo *repository.Repository, sessionSvc TelegramSessionService, logger zerolog.Logger) (*TelegramService, error) {
+	if cfg.BotToken == "" {
+		logger.Warn().Msg("Telegram BotToken is empty. Telegram integration will be disabled until configured.")
+		return &TelegramService{
+			config:     cfg,
+			repo:       repo,
+			sessionSvc: sessionSvc,
+			logger:     logger,
+		}, nil
+	}
+
 	bot, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
+		logger.Warn().Err(err).Msg("Failed to create Telegram bot. Telegram integration will be disabled until reconfigured.")
+		return &TelegramService{
+			config:     cfg,
+			repo:       repo,
+			sessionSvc: sessionSvc,
+			logger:     logger,
+		}, nil
 	}
 
 	bot.Debug = false
 
 	svc := &TelegramService{
-		bot:       bot,
-		config:    cfg,
-		repo:      repo,
+		bot:        bot,
+		config:     cfg,
+		repo:       repo,
 		sessionSvc: sessionSvc,
-		logger:    logger,
+		logger:     logger,
 	}
 
 	return svc, nil
 }
 
 func (s *TelegramService) SetWebhook(ctx context.Context) error {
+	if s.bot == nil {
+		return fmt.Errorf("telegram bot not initialized")
+	}
+
 	wh, err := tgbotapi.NewWebhook(s.config.WebhookURL)
 	if err != nil {
 		return fmt.Errorf("failed to create webhook config: %w", err)
@@ -162,6 +182,10 @@ func (s *TelegramService) handleStatusCommand(msg *tgbotapi.Message) error {
 }
 
 func (s *TelegramService) sendReply(msg *tgbotapi.Message, text string) error {
+	if s.bot == nil {
+		s.logger.Warn().Int64("chat_id", msg.Chat.ID).Msg("cannot send reply: bot not configured")
+		return nil
+	}
 	reply := tgbotapi.NewMessage(msg.Chat.ID, text)
 	reply.ReplyToMessageID = msg.MessageID
 
@@ -170,12 +194,19 @@ func (s *TelegramService) sendReply(msg *tgbotapi.Message, text string) error {
 }
 
 func (s *TelegramService) SendMessage(chatID int64, text string) error {
+	if s.bot == nil {
+		s.logger.Warn().Int64("chat_id", chatID).Msg("cannot send message: bot not configured")
+		return nil
+	}
 	msg := tgbotapi.NewMessage(chatID, text)
 	_, err := s.bot.Send(msg)
 	return err
 }
 
 func (s *TelegramService) GetBotInfo() (tgbotapi.User, error) {
+	if s.bot == nil {
+		return tgbotapi.User{}, fmt.Errorf("bot not configured")
+	}
 	return s.bot.Self, nil
 }
 

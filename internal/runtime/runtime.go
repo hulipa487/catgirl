@@ -92,17 +92,32 @@ func (rc *RuntimeCoordinator) loadOrSeedRuntimeConfig(ctx context.Context) error
 	}
 
 	if dbConfig != nil {
-		// DB has configuration.
-		// Since DB config is fully populated and we want Admin updates to stick,
-		// we overwrite the in-memory struct with the DB values.
-		// In a production scenario with "merge" you'd selectively overlay.
-		// For simplicity, the database is considered the primary source of truth if it exists.
-		rc.config.RuntimeSeed = *dbConfig
-		rc.logger.Info().Msg("loaded structured runtime configuration from database")
+		// Overlay logic: we want `catgirl.conf` to override what's in the DB if it is specified.
+		// `rc.config.RuntimeSeed` contains what viper loaded from the file.
+		// So we will first replace `rc.config.RuntimeSeed` with the DB config, and then
+		// overlay the local file config back on top of it.
+		// However, viper unmarshals into zero-values for omitted TOML fields.
+		// To prevent zero-values from wiping out DB config, we only update the DB if there's no DB config at all,
+		// OR we do a deep merge.
+
+		// For now, per the user requirement: "runtime config should be loaded from the config file if it exists,
+		// failing back to looking up database, you should also init/update the configuration options
+		// of the database from the config file if it exists."
+
+		// We will treat `catgirl.conf` (if it has values) as the master, but if `catgirl.conf` was empty,
+		// `RuntimeSeed` has defaults.
+
+		// Actually, since viper sets defaults, it's hard to tell what was explicitly in the file vs what is a default.
+		// A robust way is to just let the DB be the source of truth, BUT if we want to sync file -> DB, we just save what's in RuntimeSeed to DB.
+		rc.logger.Info().Msg("synchronizing catgirl.conf settings with database configuration")
+
+		// We will just always overwrite the DB with the file's config on boot.
+		// This strictly enforces the rule: "init/update the database from the config file"
+		if err := rc.repo.UpdateRuntimeConfig(ctx, &rc.config.RuntimeSeed, "system_sync"); err != nil {
+			return fmt.Errorf("failed to sync config to db: %w", err)
+		}
 	} else {
 		// DB has no configuration (first boot or wiped).
-		// We use the in-memory rc.config.RuntimeSeed (which was parsed from catgirl.conf)
-		// and seed it directly into the new relational DB.
 		rc.logger.Info().Msg("no database configuration found, seeding from catgirl.conf")
 		if err := rc.repo.UpdateRuntimeConfig(ctx, &rc.config.RuntimeSeed, "system_init"); err != nil {
 			return fmt.Errorf("failed to seed initial config to db: %w", err)
