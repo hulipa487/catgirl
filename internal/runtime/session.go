@@ -413,7 +413,7 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 			}
 
 			// Follow-up LLM call with tool results
-			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(botConfig.GPModel, botConfig.Providers), messages, tools, 0)
+			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(botConfig.GPModel, s.config.LLM.Providers), messages, tools, 0)
 			if err != nil || len(resp.Choices) == 0 {
 				s.logger.Error().Err(err).Msg("Failed to call LLM for follow-up")
 				continue
