@@ -39,5 +39,15 @@ catgirl.conf
 # Logs
 *.log
 
+# Web/Admin panel UI
+web/admin/node_modules/
+web/admin/dist/
+web/admin/.env.local
+web/admin/.env.*.local
+web/admin/npm-debug.log*
+web/admin/yarn-debug.log*
+web/admin/yarn-error.log*
+web/admin/*.tsbuildinfo
+
 # Snapshots/storage
 /var/catgirl/
