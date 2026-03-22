@@ -20,7 +20,7 @@ type TelegramService struct {
 
 type TelegramSessionService interface {
 	GetSessionIDByTelegramUser(ctx context.Context, telegramUserID int64) (interface{}, error)
-	CreateSessionForTelegramUser(ctx context.Context, telegramUserID int64, botToken string, username, firstName, lastName string) (interface{}, error)
+	CreateSessionForTelegramUser(ctx context.Context, telegramUserID int64, username, firstName, lastName string) (interface{}, error)
 	HandleUserMessage(ctx context.Context, sessionID interface{}, telegramUserID int64, message string) error
 }
 
