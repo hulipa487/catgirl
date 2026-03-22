@@ -43,6 +43,16 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 	apiRouter.GET("/api/v1/memory/search", handlers.SearchMemory)
 	apiRouter.GET("/api/v1/metrics", handlers.GetSystemMetrics)
 
+	apiRouter.GET("/api/v1/config", handlers.GetConfig)
+	apiRouter.PUT("/api/v1/config", handlers.UpdateConfig)
+
+	// API static files for admin panel (Vue.js frontend)
+	apiRouter.StaticFS("/admin", http.Dir("web/admin/dist"))
+	// Setup catch-all for SPA routing if needed (Vue Router)
+	apiRouter.NoRoute(func(c *gin.Context) {
+		c.File("web/admin/dist/index.html")
+	})
+
 	// Telegram Router
 	telegramRouter := gin.New()
 	telegramRouter.Use(gin.Recovery())
@@ -51,7 +61,7 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 	telegramHandler := NewTelegramHandler(rt.GetTelegramService())
 
 	webhookPath := "/telegram/webhook"
-	if u, err := url.Parse(cfg.Telegram.WebhookURL); err == nil && u.Path != "" {
+	if u, err := url.Parse(cfg.RuntimeSeed.Telegram.WebhookURL); err == nil && u.Path != "" {
 		webhookPath = u.Path
 	}
 	telegramRouter.POST(webhookPath, telegramHandler.HandleWebhook)
@@ -65,7 +75,7 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 			IdleTimeout:  60 * time.Second,
 		},
 		telegramServer: &http.Server{
-			Addr:         cfg.Telegram.ListenAddr,
+			Addr:         cfg.RuntimeSeed.Telegram.ListenAddr,
 			Handler:      telegramRouter,
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 30 * time.Second,
@@ -88,7 +98,7 @@ func (s *Server) Start() error {
 	}()
 
 	go func() {
-		s.logger.Info().Str("addr", s.config.Telegram.ListenAddr).Msg("starting Telegram Webhook HTTP server")
+		s.logger.Info().Str("addr", s.config.RuntimeSeed.Telegram.ListenAddr).Msg("starting Telegram Webhook HTTP server")
 		if err := s.telegramServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("Telegram Webhook HTTP server error: %w", err)
 		}

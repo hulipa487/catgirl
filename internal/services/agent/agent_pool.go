@@ -48,7 +48,7 @@ type WorkerAgent struct {
 
 	repo    *repository.Repository
 	taskSvc *task.TaskService
-	config  *config.Config
+	config  *config.RuntimeConfig
 	logger  zerolog.Logger
 	memory  *WorkingMemoryService
 	ltm     *LongTermMemoryService
@@ -96,7 +96,7 @@ type PendingToolCall struct {
 	Timestamp time.Time
 }
 
-func NewAgentPool(repo *repository.Repository, taskSvc *task.TaskService, cfg *config.Config, logger zerolog.Logger) *AgentPool {
+func NewAgentPool(repo *repository.Repository, taskSvc *task.TaskService, cfg *config.RuntimeConfig, logger zerolog.Logger) *AgentPool {
 	ap := &AgentPool{
 		repo:    repo,
 		taskSvc: taskSvc,
@@ -402,10 +402,10 @@ type LongTermMemoryService struct {
 	repo      *repository.Repository
 	sessionID uuid.UUID
 	llm       *llm.LLMService
-	cfg       *config.Config
+	cfg       *config.RuntimeConfig
 }
 
-func NewLongTermMemoryService(repo *repository.Repository, sessionID uuid.UUID, llmSvc *llm.LLMService, cfg *config.Config) *LongTermMemoryService {
+func NewLongTermMemoryService(repo *repository.Repository, sessionID uuid.UUID, llmSvc *llm.LLMService, cfg *config.RuntimeConfig) *LongTermMemoryService {
 	return &LongTermMemoryService{
 		repo:      repo,
 		sessionID: sessionID,
@@ -509,7 +509,7 @@ func getCostMultiplier(membership string) float64 {
 	}
 }
 
-func SetAgentServices(agent *WorkerAgent, repo *repository.Repository, sessionID uuid.UUID, llmSvc *llm.LLMService, cfg *config.Config) {
+func SetAgentServices(agent *WorkerAgent, repo *repository.Repository, sessionID uuid.UUID, llmSvc *llm.LLMService, cfg *config.RuntimeConfig) {
 	agent.memory = NewWorkingMemoryService(repo, agent.ID)
 	agent.ltm = NewLongTermMemoryService(repo, sessionID, llmSvc, cfg)
 	agent.billing = NewBillingService(repo, sessionID, "")

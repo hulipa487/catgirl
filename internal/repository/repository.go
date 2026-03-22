@@ -26,6 +26,26 @@ func (r *Repository) Ping(ctx context.Context) map[string]interface{} {
 
 // Session Repository
 
+func (r *Repository) GetRuntimeConfig(ctx context.Context) (json.RawMessage, error) {
+	var config json.RawMessage
+	err := r.db.Pool.QueryRow(ctx, `SELECT config FROM runtime_config WHERE id = 1`).Scan(&config)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return config, err
+}
+
+func (r *Repository) UpdateRuntimeConfig(ctx context.Context, config json.RawMessage, updatedBy string) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		INSERT INTO runtime_config (id, config, updated_by, updated_at)
+		VALUES (1, $1, $2, NOW())
+		ON CONFLICT (id) DO UPDATE SET config = $1, updated_by = $2, updated_at = NOW()
+	`, config, updatedBy)
+	return err
+}
+
+// Session Repository
+
 func (r *Repository) CreateSession(ctx context.Context, s *models.Session) error {
 	_, err := r.db.Pool.Exec(ctx, `
 		INSERT INTO sessions (id, telegram_user_id, name, status, created_at, updated_at, orchestrator_state, metadata)

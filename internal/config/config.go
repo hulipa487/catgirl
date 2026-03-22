@@ -13,17 +13,24 @@ const (
 )
 
 type Config struct {
-	Global      GlobalConfig      `mapstructure:"global"`
-	Database    DatabaseConfig    `mapstructure:"database"`
-	LLM         LLMConfig         `mapstructure:"llm"`
-	AgentPool   AgentPoolConfig   `mapstructure:"agent_pool"`
-	Snapshot    SnapshotConfig     `mapstructure:"snapshots"`
-	Telegram    TelegramConfig    `mapstructure:"telegram"`
-	Server      ServerConfig      `mapstructure:"server"`
-	Auth        AuthConfig        `mapstructure:"auth"`
-	Context     ContextConfig     `mapstructure:"context"`
-	RAG         RAGConfig         `mapstructure:"rag"`
-	Logging     LoggingConfig     `mapstructure:"logging"`
+	Database      DatabaseConfig `mapstructure:"database"`
+	Server        ServerConfig   `mapstructure:"server"`
+	Logging       LoggingConfig  `mapstructure:"logging"`
+
+	// These values act as defaults seeded into the DB on first run
+	RuntimeSeed   RuntimeConfig  `mapstructure:",remain"`
+}
+
+// RuntimeConfig represents all dynamically reloadable config stored in the DB
+type RuntimeConfig struct {
+	Global      GlobalConfig      `json:"global"`
+	LLM         LLMConfig         `json:"llm"`
+	AgentPool   AgentPoolConfig   `json:"agent_pool"`
+	Snapshot    SnapshotConfig     `json:"snapshots"`
+	Telegram    TelegramConfig    `json:"telegram"`
+	Auth        AuthConfig        `json:"auth"`
+	Context     ContextConfig     `json:"context"`
+	RAG         RAGConfig         `json:"rag"`
 }
 
 type GlobalConfig struct {
@@ -151,8 +158,17 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	if err := v.Unmarshal(&cfg.RuntimeSeed); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal runtime config seed: %w", err)
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	// Validate the initial seed
+	if err := cfg.RuntimeSeed.Validate(); err != nil {
+		return nil, fmt.Errorf("runtime config seed validation failed: %w", err)
 	}
 
 	return &cfg, nil
@@ -165,6 +181,22 @@ func (c *Config) Validate() error {
 	if c.Database.DBName == "" {
 		return fmt.Errorf("database.dbname is required")
 	}
+	if c.Server.Port == 0 {
+		c.Server.Port = 8080
+	}
+	if c.Server.Host == "" {
+		c.Server.Host = "0.0.0.0"
+	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = "info"
+	}
+	if c.Logging.Format == "" {
+		c.Logging.Format = "json"
+	}
+	return nil
+}
+
+func (c *RuntimeConfig) Validate() error {
 	if len(c.LLM.Providers) == 0 {
 		return fmt.Errorf("at least one llm.providers entry is required")
 	}
@@ -186,12 +218,6 @@ func (c *Config) Validate() error {
 	}
 	if c.Telegram.WebhookURL == "" {
 		return fmt.Errorf("telegram.webhook_url is required")
-	}
-	if c.Server.Port == 0 {
-		c.Server.Port = 8080
-	}
-	if c.Server.Host == "" {
-		c.Server.Host = "0.0.0.0"
 	}
 	if c.Global.MaxTaskDepth == 0 {
 		c.Global.MaxTaskDepth = 3
@@ -228,12 +254,6 @@ func (c *Config) Validate() error {
 	}
 	if c.LLM.EmbeddingDims == 0 {
 		c.LLM.EmbeddingDims = 1024
-	}
-	if c.Logging.Level == "" {
-		c.Logging.Level = "info"
-	}
-	if c.Logging.Format == "" {
-		c.Logging.Format = "json"
 	}
 	return nil
 }

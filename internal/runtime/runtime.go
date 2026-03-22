@@ -60,17 +60,23 @@ func NewRuntimeCoordinator(cfg *config.Config, logger zerolog.Logger) (*RuntimeC
 
 	repo := repository.New(db)
 
-	llmSvc := llm.NewLLMService(&cfg.LLM, logger)
-
 	rc := &RuntimeCoordinator{
 		config:  cfg,
 		logger:  logger,
 		db:      db,
 		repo:    repo,
-		llmSvc:  llmSvc,
 		stopCh:  make(chan struct{}),
 		blockedAgents: make(map[string]*blockedAgentInfo),
 	}
+
+	// Load or seed config
+	if err := rc.loadOrSeedRuntimeConfig(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to load/seed runtime config: %w", err)
+	}
+
+	llmSvc := llm.NewLLMService(&cfg.RuntimeSeed.LLM, logger)
+
+	rc.llmSvc = llmSvc
 
 	if err := rc.initializeServices(); err != nil {
 		return nil, fmt.Errorf("failed to initialize services: %w", err)
@@ -79,27 +85,53 @@ func NewRuntimeCoordinator(cfg *config.Config, logger zerolog.Logger) (*RuntimeC
 	return rc, nil
 }
 
-func (rc *RuntimeCoordinator) initializeServices() error {
-	taskQueue := task.NewGlobalTaskQueue(rc.repo, rc.config, rc.logger)
-	rc.taskQueue = taskQueue
-	rc.taskService = task.NewTaskService(rc.repo, taskQueue, rc.config, rc.logger)
+func (rc *RuntimeCoordinator) loadOrSeedRuntimeConfig(ctx context.Context) error {
+	rawConfig, err := rc.repo.GetRuntimeConfig(ctx)
+	if err != nil {
+		return err
+	}
 
-	agentPool := agent.NewAgentPool(rc.repo, rc.taskService, rc.config, rc.logger)
+	if rawConfig != nil && len(rawConfig) > 2 { // Not empty object {}
+		if err := json.Unmarshal(rawConfig, &rc.config.RuntimeSeed); err != nil {
+			return fmt.Errorf("failed to parse config from DB: %w", err)
+		}
+		rc.logger.Info().Msg("loaded runtime configuration from database")
+	} else {
+		// Save the default seed to DB
+		seedBytes, err := json.Marshal(rc.config.RuntimeSeed)
+		if err != nil {
+			return err
+		}
+		if err := rc.repo.UpdateRuntimeConfig(ctx, seedBytes, "system_init"); err != nil {
+			return err
+		}
+		rc.logger.Info().Msg("seeded default runtime configuration into database")
+	}
+
+	return nil
+}
+
+func (rc *RuntimeCoordinator) initializeServices() error {
+	taskQueue := task.NewGlobalTaskQueue(rc.repo, &rc.config.RuntimeSeed, rc.logger)
+	rc.taskQueue = taskQueue
+	rc.taskService = task.NewTaskService(rc.repo, taskQueue, &rc.config.RuntimeSeed, rc.logger)
+
+	agentPool := agent.NewAgentPool(rc.repo, rc.taskService, &rc.config.RuntimeSeed, rc.logger)
 	rc.agentPool = agentPool
 
-	sessionSvc := NewSessionService(rc.repo, rc.config, rc.logger, rc.llmSvc, rc.taskService)
+	sessionSvc := NewSessionService(rc.repo, &rc.config.RuntimeSeed, rc.logger, rc.llmSvc, rc.taskService)
 	rc.sessionSvc = sessionSvc
 
-	authSvc := auth.NewAuthService(&rc.config.Auth, rc.logger)
+	authSvc := auth.NewAuthService(&rc.config.RuntimeSeed.Auth, rc.logger)
 	rc.authSvc = authSvc
 
-	snapshotSvc := snapshot.NewSnapshotService(rc.repo, &rc.config.Snapshot, rc.logger)
+	snapshotSvc := snapshot.NewSnapshotService(rc.repo, &rc.config.RuntimeSeed.Snapshot, rc.logger)
 	rc.snapshotSvc = snapshotSvc
 
-	ragSvc := rag.NewRAGService(rc.repo, rc.llmSvc, &rc.config.RAG, rc.logger)
+	ragSvc := rag.NewRAGService(rc.repo, rc.llmSvc, &rc.config.RuntimeSeed.RAG, rc.logger)
 	rc.ragSvc = ragSvc
 
-	telegramSvc, err := telegram.NewTelegramService(&rc.config.Telegram, rc.repo, rc.sessionSvc, rc.logger)
+	telegramSvc, err := telegram.NewTelegramService(&rc.config.RuntimeSeed.Telegram, rc.repo, rc.sessionSvc, rc.logger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize telegram service: %w", err)
 	}
@@ -139,7 +171,7 @@ func (rc *RuntimeCoordinator) startBackgroundWorkers() error {
 }
 
 func (rc *RuntimeCoordinator) startWorkerLoop() error {
-	workerCount := rc.config.AgentPool.MinAgents
+	workerCount := rc.config.RuntimeSeed.AgentPool.MinAgents
 
 	for i := 0; i < workerCount; i++ {
 		rc.workerWg.Add(1)
@@ -217,7 +249,7 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 		return fmt.Errorf("failed to get task family")
 	}
 
-	agent.SetAgentServices(workerAgent, rc.repo, tf.SessionID, rc.llmSvc, rc.config)
+	agent.SetAgentServices(workerAgent, rc.repo, tf.SessionID, rc.llmSvc, &rc.config.RuntimeSeed)
 
 	// Get session context
 	session, err := rc.sessionSvc.GetSession(ctx, tf.SessionID)
@@ -275,7 +307,7 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		case "task_start":
 			// Initial task description
 			msg.Role = "user"
-			msg.Content = fmt.Sprintf(rc.config.LLM.AgentSystemPrompt, input.Content)
+			msg.Content = fmt.Sprintf(rc.config.RuntimeSeed.LLM.AgentSystemPrompt, input.Content)
 
 		case "tool_result":
 			// Async tool callback result

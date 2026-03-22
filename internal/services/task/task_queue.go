@@ -130,7 +130,7 @@ func (pq *PriorityQueue) GetBySession(ctx context.Context, repo *repository.Repo
 type GlobalTaskQueue struct {
 	pq         *PriorityQueue
 	repo       *repository.Repository
-	config     *config.Config
+	config     *config.RuntimeConfig
 	logger     zerolog.Logger
 	mu         sync.RWMutex
 	enqueueCh  chan *models.TaskInstance
@@ -142,7 +142,7 @@ type DequeueRequest struct {
 	ResultCh  chan *models.TaskInstance
 }
 
-func NewGlobalTaskQueue(repo *repository.Repository, cfg *config.Config, logger zerolog.Logger) *GlobalTaskQueue {
+func NewGlobalTaskQueue(repo *repository.Repository, cfg *config.RuntimeConfig, logger zerolog.Logger) *GlobalTaskQueue {
 	gtq := &GlobalTaskQueue{
 		pq:         NewPriorityQueue(cfg.Global.MaxQueueSize),
 		repo:       repo,
@@ -265,11 +265,11 @@ func (gtq *GlobalTaskQueue) GetQueueStatus() map[string]interface{} {
 type TaskService struct {
 	repo       *repository.Repository
 	queue      *GlobalTaskQueue
-	config     *config.Config
+	config     *config.RuntimeConfig
 	logger     zerolog.Logger
 }
 
-func NewTaskService(repo *repository.Repository, queue *GlobalTaskQueue, cfg *config.Config, logger zerolog.Logger) *TaskService {
+func NewTaskService(repo *repository.Repository, queue *GlobalTaskQueue, cfg *config.RuntimeConfig, logger zerolog.Logger) *TaskService {
 	return &TaskService{
 		repo:   repo,
 		queue:  queue,
