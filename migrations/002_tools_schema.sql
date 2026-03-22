@@ -50,3 +50,26 @@ INSERT INTO tools (name, description, parameters) VALUES
     }'::jsonb
 )
 ON CONFLICT (name) DO NOTHING;
+
+-- Seed data: SET_STATE tool (for worker agents to signal state)
+INSERT INTO tools (name, description, parameters) VALUES
+(
+    'SET_STATE',
+    'Set the agent state. BLOCKING = waiting for async tool result, COMPLETED = task finished successfully, FAILED = task failed',
+    '{
+        "type": "object",
+        "properties": {
+            "state": {
+                "type": "string",
+                "enum": ["BLOCKING", "COMPLETED", "FAILED"],
+                "description": "The state to set: BLOCKING (waiting for async result), COMPLETED (task finished), FAILED (task failed)"
+            },
+            "result": {
+                "type": "string",
+                "description": "Result summary or error reason for COMPLETED or FAILED states"
+            }
+        },
+        "required": ["state"]
+    }'::jsonb
+)
+ON CONFLICT (name) DO NOTHING;

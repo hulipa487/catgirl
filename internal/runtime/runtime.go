@@ -39,6 +39,17 @@ type RuntimeCoordinator struct {
 
 	workerWg   sync.WaitGroup
 	stopCh     chan struct{}
+
+	// Track blocked agents waiting for async results
+	blockedAgents    map[string]*blockedAgentInfo
+	blockedAgentsMu  sync.RWMutex
+}
+
+type blockedAgentInfo struct {
+	TaskInstance      *models.TaskInstance
+	Session          *Session
+	ConversationHistory []llm.ChatMessage
+	Tools           []llm.Tool
 }
 
 func NewRuntimeCoordinator(cfg *config.Config, logger zerolog.Logger) (*RuntimeCoordinator, error) {
@@ -58,6 +69,7 @@ func NewRuntimeCoordinator(cfg *config.Config, logger zerolog.Logger) (*RuntimeC
 		repo:    repo,
 		llmSvc:  llmSvc,
 		stopCh:  make(chan struct{}),
+		blockedAgents: make(map[string]*blockedAgentInfo),
 	}
 
 	if err := rc.initializeServices(); err != nil {
@@ -151,14 +163,25 @@ func (rc *RuntimeCoordinator) workerLoop(workerID int) {
 			return
 
 		default:
+			// Try to get an idle agent, or spawn one if under capacity
 			agent := rc.agentPool.GetIdleAgent("")
 			if agent == nil {
-				time.Sleep(1 * time.Second)
-				continue
+				// Try to spawn a new agent
+				spawnedAgent, err := rc.agentPool.SpawnAgent(context.Background(), models.AgentTypeGeneralPurpose)
+				if err != nil {
+					// At max capacity or other error, wait and retry
+					logger.Debug().Err(err).Msg("could not spawn agent, waiting...")
+					time.Sleep(2 * time.Second)
+					continue
+				}
+				agent = spawnedAgent
+				logger.Info().Str("agent_id", agent.ID).Msg("spawned new agent")
 			}
 
+			// Try to dequeue a task
 			taskInstance := rc.taskQueue.Dequeue("")
 			if taskInstance == nil {
+				// No tasks available, wait before trying again
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -168,9 +191,14 @@ func (rc *RuntimeCoordinator) workerLoop(workerID int) {
 				Str("agent_id", agent.ID).
 				Msg("worker picked up task")
 
+			// Execute task - this runs the agent's main loop
 			if err := rc.executeTask(agent, taskInstance); err != nil {
 				logger.Error().Err(err).Str("instance_id", taskInstance.InstanceID.String()).Msg("task execution failed")
 			}
+
+			// Agent is done (either completed or blocked waiting for input)
+			// Mark as idle so it can pick up new tasks
+			agent.Status = models.AgentStatusIdle
 		}
 	}
 }
@@ -193,151 +221,246 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 
 	agent.SetAgentServices(workerAgent, rc.repo, taskInstance.SessionID, rc.llmSvc, rc.config)
 
-	// Build context
+	// Get session context
 	session, err := rc.sessionSvc.GetSession(ctx, taskInstance.SessionID)
 	if err != nil || session == nil {
 		logger.Error().Err(err).Msg("Failed to get session context for task")
 		return fmt.Errorf("failed to get session context")
 	}
 
-	// A worker agent should be stateless and generic.
-	// Its context is solely the task description and whatever it finds via tools.
-	messages := []llm.ChatMessage{
-		{Role: "system", Content: fmt.Sprintf("You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task and report back using the COMPLETE_TASK or FAIL_TASK tool.", taskInstance.Description)},
-	}
+	// Reset agent state for new task
+	workerAgent.mu.Lock()
+	workerAgent.CurrentTask = taskInstance
+	workerAgent.State = agent.AgentStateFree
+	workerAgent.OutputHistory = make([]agent.AgentMessage, 0)
+	workerAgent.mu.Unlock()
 
-	// Fetch any internal task-owner channel history if there was any (omitted here for simplicity,
-	// but workers shouldn't get the user's full main orchestrator chat history directly).
-
+	// Load tools from database
 	tools, err := LoadToolsFromDB(ctx, rc.repo)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to load tools from database")
-		taskInstance.Status = models.TaskStatusFailed
-		errStr := "Failed to load tools"
-		taskInstance.Error = &errStr
-		rc.repo.UpdateTaskInstance(ctx, taskInstance)
 		return err
 	}
 
-	if len(tools) == 0 {
-		logger.Warn().Msg("No tools loaded from database")
-	}
+	// Register this agent as available for async callbacks
+	rc.registerAgentForCallback(workerAgent.ID, taskInstance, session, tools)
 
-	resp, err := rc.llmSvc.ChatWithTools(ctx, rc.config.LLM.GPModel, messages, tools, 0)
-	if err != nil || len(resp.Choices) == 0 {
-		logger.Error().Err(err).Msg("Task execution LLM call failed")
-		taskInstance.Status = models.TaskStatusFailed
-		errStr := "LLM call failed"
-		if err != nil {
-			errStr = err.Error()
+	// Send initial task input to the agent
+	initialInput := &agent.AgentInput{
+		Type:    "task_start",
+		Content: taskInstance.Description,
+	}
+	workerAgent.SendInput(initialInput)
+
+	// Run the agent's main loop - this blocks until agent signals "free" state
+	return rc.runAgentLoop(workerAgent, taskInstance, session, logger)
+}
+
+// runAgentLoop processes inputs from the agent's queue and calls the LLM
+func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskInstance *models.TaskInstance, session *Session, logger zerolog.Logger) error {
+	ctx := context.Background()
+	now := time.Now()
+
+	// Main agent loop - processes inputs until state is "free"
+	for {
+		// Wait for input from the queue
+		input := <-workerAgent.InputQueue
+		logger.Debug().Str("input_type", input.Type).Msg("Agent received input")
+
+		// Build message from input
+		var msg agent.AgentMessage
+		msg.Timestamp = time.Now()
+
+		switch input.Type {
+		case "task_start":
+			// Initial task description
+			msg.Role = "user"
+			msg.Content = fmt.Sprintf("You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task. When waiting for async results, use SET_STATE blocking. When done, use SET_STATE free and COMPLETE_TASK or FAIL_TASK.", input.Content)
+
+		case "tool_result":
+			// Async tool callback result
+			msg.Role = "tool"
+			msg.ToolCallID = input.ToolID
+			msg.Content = input.Content
+
+		case "message":
+			// Direct message input
+			msg.Role = "user"
+			msg.Content = input.Content
+
+		default:
+			logger.Warn().Str("input_type", input.Type).Msg("Unknown input type")
+			continue
 		}
-		taskInstance.Error = &errStr
-		rc.repo.UpdateTaskInstance(ctx, taskInstance)
-		return err
-	}
 
-	msg := resp.Choices[0].Message
+		// Add to output history
+		workerAgent.OutputHistory = append(workerAgent.OutputHistory, msg)
 
-	// Handle tool calls
-	if len(msg.ToolCalls) > 0 {
-		for _, tc := range msg.ToolCalls {
-			logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Agent called tool")
+		// Convert output history to LLM messages
+		llmMessages := rc.convertToLLMMessages(workerAgent.OutputHistory)
 
-			var args map[string]interface{}
-			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+		// Load tools
+		tools, err := LoadToolsFromDB(ctx, rc.repo)
+		if err != nil || len(tools) == 0 {
+			logger.Warn().Msg("No tools available")
+			tools = []llm.Tool{}
+		}
 
-			switch tc.Function.Name {
-			case "SEND_MESSAGE":
-				if text, ok := args["message"].(string); ok {
-					rc.sessionSvc.OnReply(session.TelegramUserID, text)
+		// Call LLM
+		resp, err := rc.llmSvc.ChatWithTools(ctx, rc.config.LLM.GPModel, llmMessages, tools, 0)
+		if err != nil || len(resp.Choices) == 0 {
+			logger.Error().Err(err).Msg("LLM call failed")
+			return err
+		}
 
-					replyResultMap := map[string]interface{}{"text": text}
-					replyResultBytes, _ := json.Marshal(replyResultMap)
+		llmMsg := resp.Choices[0].Message
 
-					agentTurn := &models.ConversationTurn{
-						Thought:   "I am sending a message.",
-						Action:    "SEND_MESSAGE",
-						Result:    replyResultBytes,
-						Tokens:    0,
-						Timestamp: time.Now(),
+		// Add LLM response to output history
+		assistantMsg := agent.AgentMessage{
+			Role:     "assistant",
+			Content:  llmMsg.Content,
+			Timestamp: time.Now(),
+		}
+		for _, tc := range llmMsg.ToolCalls {
+			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, agent.ToolCallInfo{
+				ID:        tc.ID,
+				Name:      tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+			})
+		}
+		workerAgent.OutputHistory = append(workerAgent.OutputHistory, assistantMsg)
+
+		// Process tool calls
+		if len(llmMsg.ToolCalls) > 0 {
+			stateChange := "" // "", "BLOCKING", "COMPLETED", or "FAILED"
+
+			for _, tc := range llmMsg.ToolCalls {
+				logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Agent called tool")
+
+				var args map[string]interface{}
+				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+
+				var toolResult string
+
+				switch tc.Function.Name {
+				case "SET_STATE":
+					state, _ := args["state"].(string)
+					result, _ := args["result"].(string)
+					stateChange = state
+
+					switch state {
+					case "BLOCKING":
+						workerAgent.SetBlocking(true)
+						toolResult = `{"status": "ok", "state": "BLOCKING"}`
+						logger.Info().Str("agent_id", workerAgent.ID).Msg("Agent state: BLOCKING")
+
+					case "COMPLETED":
+						workerAgent.SetBlocking(false)
+						taskInstance.Status = models.TaskStatusCompleted
+						taskInstance.CompletedAt = &now
+						taskInstance.Result, _ = json.Marshal(map[string]string{"summary": result})
+						rc.repo.UpdateTaskInstance(ctx, taskInstance)
+						toolResult = `{"status": "ok", "state": "COMPLETED"}`
+						logger.Info().Str("agent_id", workerAgent.ID).Msg("Agent state: COMPLETED")
+
+					case "FAILED":
+						workerAgent.SetBlocking(false)
+						taskInstance.Status = models.TaskStatusFailed
+						taskInstance.CompletedAt = &now
+						if result != "" {
+							taskInstance.Error = &result
+						}
+						rc.repo.UpdateTaskInstance(ctx, taskInstance)
+						toolResult = `{"status": "ok", "state": "FAILED"}`
+						logger.Info().Str("agent_id", workerAgent.ID).Msg("Agent state: FAILED")
+
+					default:
+						toolResult = fmt.Sprintf(`{"error": "unknown state: %s"}`, state)
 					}
-					_ = rc.sessionSvc.AddConversationTurn(ctx, session.ID, agentTurn)
+
+				case "SEND_MESSAGE":
+					if text, ok := args["message"].(string); ok {
+						rc.sessionSvc.OnReply(session.TelegramUserID, text)
+						toolResult = `{"status": "sent"}`
+					}
+
+				case "SPAWN_TASK":
+					desc, _ := args["description"].(string)
+					if desc != "" {
+						subTask, err := rc.taskService.SpawnSubTask(ctx, taskInstance, desc, models.AgentTypeGeneralPurpose, models.PriorityNormal)
+						if err != nil {
+							toolResult = fmt.Sprintf(`{"error": "failed to spawn task: %s"}`, err.Error())
+						} else {
+							toolResult = fmt.Sprintf(`{"status": "spawned", "instance_id": "%s", "task_id": "%s"}`,
+								subTask.InstanceID.String(), subTask.TaskID.String())
+						}
+					}
+
+				default:
+					toolResult = `{"error": "unknown tool"}`
 				}
 
-				taskInstance.Status = models.TaskStatusCompleted
-				taskInstance.CompletedAt = &now
-				rc.repo.UpdateTaskInstance(ctx, taskInstance)
-
-			case "COMPLETE_TASK":
-				taskInstance.Status = models.TaskStatusCompleted
-				taskInstance.CompletedAt = &now
-				taskInstance.Result, _ = json.Marshal(args)
-				rc.repo.UpdateTaskInstance(ctx, taskInstance)
-
-			case "FAIL_TASK":
-				taskInstance.Status = models.TaskStatusFailed
-				taskInstance.CompletedAt = &now
-				if reason, ok := args["reason"].(string); ok {
-					taskInstance.Error = &reason
+				// Add tool result to output history
+				toolMsg := agent.AgentMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Content:     toolResult,
+					Timestamp:  time.Now(),
 				}
-				rc.repo.UpdateTaskInstance(ctx, taskInstance)
+				workerAgent.OutputHistory = append(workerAgent.OutputHistory, toolMsg)
+			}
 
-			case "SPAWN_TASK":
-				desc, _ := args["description"].(string)
-				priStr, _ := args["priority"].(string)
-				pri := models.PriorityNormal
-				if priStr != "" {
-					pri = models.Priority(priStr)
-				}
+			// If state is BLOCKING, wait for more input
+			if stateChange == "BLOCKING" {
+				logger.Info().Str("agent_id", workerAgent.ID).Msg("Agent blocking, waiting for async input")
+				continue
+			}
 
-				_, err := rc.taskService.SpawnSubTask(ctx, taskInstance, desc, models.AgentTypeGeneralPurpose, pri)
-				if err != nil {
-					logger.Error().Err(err).Msg("Failed to spawn sub-task")
-				}
-
-				// Note: Re-enqueueing parent task or managing state machine would be needed for a full loop,
-				// for now we'll mark this single turn task as complete.
-				taskInstance.Status = models.TaskStatusCompleted
-				taskInstance.CompletedAt = &now
-				taskInstance.Result, _ = json.Marshal(map[string]string{"spawned": desc})
-				rc.repo.UpdateTaskInstance(ctx, taskInstance)
+			// If state is COMPLETED or FAILED, exit the loop
+			if stateChange == "COMPLETED" || stateChange == "FAILED" {
+				rc.unregisterAgentForCallback(workerAgent.ID)
+				return nil
 			}
 		}
-	} else {
-		// Just a text response, let's assume it completes the task
-		taskInstance.Status = models.TaskStatusCompleted
-		taskInstance.CompletedAt = &now
-		taskInstance.Result, _ = json.Marshal(map[string]string{"text": msg.Content})
-		rc.repo.UpdateTaskInstance(ctx, taskInstance)
 
-		if msg.Content != "" {
-			rc.sessionSvc.OnReply(session.TelegramUserID, msg.Content)
-
-			replyResultMap := map[string]interface{}{"text": msg.Content}
-			replyResultBytes, _ := json.Marshal(replyResultMap)
-
-			agentTurn := &models.ConversationTurn{
-				Thought:   "",
-				Action:    "SEND_MESSAGE",
-				Result:    replyResultBytes,
-				Tokens:    0,
-				Timestamp: time.Now(),
-			}
-			_ = rc.sessionSvc.AddConversationTurn(ctx, session.ID, agentTurn)
-		}
+		// No tool calls or no state change to BLOCKING - exit loop
+		logger.Info().Str("agent_id", workerAgent.ID).Msg("Agent exiting loop (no state change)")
+		break
 	}
 
-	workerAgent.Status = models.AgentStatusIdle
-
-	if rc.config.Snapshot.Enabled {
-		_, err := rc.snapshotSvc.CreateSnapshot(ctx, taskInstance, models.SnapshotReasonCompleted)
-		if err != nil {
-			logger.Warn().Err(err).Msg("failed to create snapshot")
-		}
-	}
-
-	logger.Info().Msg("task completed")
 	return nil
+}
+
+// convertToLLMMessages converts agent output history to LLM chat messages
+func (rc *RuntimeCoordinator) convertToLLMMessages(history []agent.AgentMessage) []llm.ChatMessage {
+	messages := []llm.ChatMessage{}
+
+	for _, msg := range history {
+		llmMsg := llm.ChatMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
+		}
+
+		if msg.Role == "tool" {
+			llmMsg.ToolCallID = msg.ToolCallID
+		}
+
+		if len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				llmMsg.ToolCalls = append(llmMsg.ToolCalls, llm.ToolCall{
+					ID: tc.ID,
+					Function: llm.ToolCallFunction{
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					},
+				})
+			}
+		}
+
+		messages = append(messages, llmMsg)
+	}
+
+	return messages
 }
 
 func (rc *RuntimeCoordinator) snapshotCleanupWorker() {
@@ -413,6 +536,61 @@ func (rc *RuntimeCoordinator) logHealthStatus() {
 		Interface("tasks", taskStatus).
 		Interface("agents", agentStatus).
 		Msg("health status")
+}
+
+// registerAgentForCallback registers an agent as available for async callbacks
+func (rc *RuntimeCoordinator) registerAgentForCallback(agentID string, taskInstance *models.TaskInstance, session *Session, tools []llm.Tool) {
+	rc.blockedAgentsMu.Lock()
+	defer rc.blockedAgentsMu.Unlock()
+
+	rc.blockedAgents[agentID] = &blockedAgentInfo{
+		TaskInstance: taskInstance,
+		Session:     session,
+		Tools:       tools,
+	}
+
+	rc.logger.Debug().Str("agent_id", agentID).Str("instance_id", taskInstance.InstanceID.String()).Msg("Agent registered for callback")
+}
+
+// unregisterAgentForCallback removes an agent from the callback registry
+func (rc *RuntimeCoordinator) unregisterAgentForCallback(agentID string) {
+	rc.blockedAgentsMu.Lock()
+	defer rc.blockedAgentsMu.Unlock()
+
+	delete(rc.blockedAgents, agentID)
+
+	rc.logger.Debug().Str("agent_id", agentID).Msg("Agent unregistered from callback")
+}
+
+// SendToolResultToAgent sends a tool result to a blocked agent's input queue
+func (rc *RuntimeCoordinator) SendToolResultToAgent(agentID string, toolID string, toolName string, result string) error {
+	rc.blockedAgentsMu.RLock()
+	_, exists := rc.blockedAgents[agentID]
+	rc.blockedAgentsMu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("agent %s is not registered for callback", agentID)
+	}
+
+	agent, ok := rc.agentPool.GetAgent(agentID)
+	if !ok {
+		return fmt.Errorf("agent %s not found", agentID)
+	}
+
+	// Send input to agent's queue
+	input := &agent.AgentInput{
+		Type:    "tool_result",
+		ToolID:  toolID,
+		ToolName: toolName,
+		Content: result,
+	}
+
+	if !agent.SendInput(input) {
+		return fmt.Errorf("failed to send input to agent %s queue", agentID)
+	}
+
+	rc.logger.Info().Str("agent_id", agentID).Str("tool_id", toolID).Msg("Sent tool result to agent")
+	return nil
 }
 
 func (rc *RuntimeCoordinator) Stop() error {

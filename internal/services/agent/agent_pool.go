@@ -34,6 +34,18 @@ type WorkerAgent struct {
 	LastActive  *time.Time
 	mu          sync.Mutex
 
+	// Input queue for async callbacks and communications
+	InputQueue chan *AgentInput
+
+	// Model output history (conversation history)
+	OutputHistory []AgentMessage
+
+	// Pending async tool calls waiting for callback
+	PendingToolCalls map[string]*PendingToolCall
+
+	// Agent state: "free" or "blocking"
+	State string
+
 	repo    *repository.Repository
 	taskSvc *task.TaskService
 	config  *config.Config
@@ -43,6 +55,45 @@ type WorkerAgent struct {
 	billing *BillingService
 
 	stopCh chan struct{}
+}
+
+// AgentInput represents an input to the worker agent
+type AgentInput struct {
+	Type    string      // "tool_result", "message", "signal"
+	Content string      // content or result
+	ToolID  string      // for tool_result type
+	ToolName string     // name of the tool
+}
+
+// AgentMessage represents a message in the output history
+type AgentMessage struct {
+	Role       string   // "user", "assistant", "tool"
+	Content    string   // message content
+	ToolCalls  []ToolCallInfo
+	ToolCallID string   // for tool messages
+	Timestamp  time.Time
+}
+
+// ToolCallInfo represents a tool call from the model
+type ToolCallInfo struct {
+	ID       string
+	Name     string
+	Arguments string
+}
+
+const (
+	AgentStateBlocking = "BLOCKING"
+	AgentStateFree     = "FREE"
+	AgentStateCompleted = "COMPLETED"
+	AgentStateFailed   = "FAILED"
+)
+
+// PendingToolCall represents a tool call awaiting callback
+type PendingToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
+	Timestamp time.Time
 }
 
 func NewAgentPool(repo *repository.Repository, taskSvc *task.TaskService, cfg *config.Config, logger zerolog.Logger) *AgentPool {
@@ -103,11 +154,15 @@ func (ap *AgentPool) SpawnAgent(ctx context.Context, agentType models.AgentType)
 	now := time.Now()
 
 	agent := &WorkerAgent{
-		ID:         agentID,
-		Type:       agentType,
-		Status:     models.AgentStatusIdle,
-		LastActive: &now,
-		stopCh:     make(chan struct{}),
+		ID:                agentID,
+		Type:              agentType,
+		Status:            models.AgentStatusIdle,
+		LastActive:        &now,
+		stopCh:            make(chan struct{}),
+		InputQueue:        make(chan *AgentInput, 100), // buffered channel for async inputs
+		OutputHistory:     make([]AgentMessage, 0),
+		PendingToolCalls:  make(map[string]*PendingToolCall),
+		State:             AgentStateFree,
 	}
 
 	if err := ap.repo.CreateAgent(ctx, &models.Agent{
@@ -197,11 +252,12 @@ func (ap *AgentPool) ListAgents() []*WorkerAgent {
 }
 
 func (ap *AgentPool) GetIdleAgent(agentType models.AgentType) *WorkerAgent {
-	ap.mu.RLock()
-	defer ap.mu.RUnlock()
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
 
 	for _, agent := range ap.agents {
 		if agent.Status == models.AgentStatusIdle && (agentType == "" || agent.Type == agentType) {
+			agent.Status = models.AgentStatusBusy
 			return agent
 		}
 	}
@@ -249,6 +305,59 @@ func (ap *AgentPool) UpdateAgentLastActive(agentID string) {
 		now := time.Now()
 		agent.LastActive = &now
 	}
+}
+
+func (ap *AgentPool) SetAgentBlocking(agentID string, blocking bool) {
+	ap.mu.RLock()
+	agent, ok := ap.agents[agentID]
+	ap.mu.RUnlock()
+
+	if ok {
+		agent.mu.Lock()
+		if blocking {
+			agent.State = AgentStateBlocking
+		} else {
+			agent.State = AgentStateFree
+		}
+		agent.mu.Unlock()
+	}
+}
+
+func (agent *WorkerAgent) IsBlocking() bool {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+	return agent.State == AgentStateBlocking
+}
+
+func (agent *WorkerAgent) SetBlocking(blocking bool) {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+	if blocking {
+		agent.State = AgentStateBlocking
+	} else {
+		agent.State = AgentStateFree
+	}
+}
+
+func (agent *WorkerAgent) IsFree() bool {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+	return agent.State == AgentStateFree
+}
+
+func (agent *WorkerAgent) SendInput(input *AgentInput) bool {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+	select {
+	case agent.InputQueue <- input:
+		return true
+	default:
+		return false // queue full
+	}
+}
+
+func (agent *WorkerAgent) GetInput() *AgentInput {
+	return <-agent.InputQueue
 }
 
 type WorkingMemoryService struct {

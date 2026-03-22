@@ -289,6 +289,9 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 			}
 			messages = append(messages, assistantMsg)
 
+			// Track if SEND_MESSAGE was called - if so, don't send follow-up text content
+			sentViaTool := false
+
 			// Process each tool call and collect tool responses
 			for _, tc := range msg.ToolCalls {
 				s.logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Main Orchestrator called tool")
@@ -301,6 +304,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 
 				switch tc.Function.Name {
 				case "SEND_MESSAGE":
+					sentViaTool = true
 					if text, ok := args["message"].(string); ok {
 						if s.OnReply != nil {
 							s.OnReply(telegramUserID, text)
@@ -337,11 +341,8 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 							}
 						}
 					}
-				case "COMPLETE_TASK":
-					s.logger.Info().Msg("COMPLETE_TASK tool called by orchestrator")
-					toolResult = `{"status": "acknowledged"}`
-				case "FAIL_TASK":
-					s.logger.Info().Msg("FAIL_TASK tool called by orchestrator")
+				case "SET_STATE":
+					// Orchestrator doesn't use SET_STATE, just acknowledge
 					toolResult = `{"status": "acknowledged"}`
 				default:
 					toolResult = `{"error": "unknown tool"}`
@@ -381,16 +382,15 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 
 			msg = resp.Choices[0].Message
 
-			// If there's still content (final response), send it to user
+			// Any text content after tool calls is internal reasoning only - do NOT send to user
+			// The only way to communicate with the user is via SEND_MESSAGE tool
 			if msg.Content != "" {
-				if s.OnReply != nil {
-					s.OnReply(telegramUserID, msg.Content)
-				}
+				s.logger.Info().Str("content", msg.Content).Msg("Orchestrator internal reasoning after tool call")
 
 				agentTurn := &models.ConversationTurn{
-					Thought:   "",
-					Action:    "SEND_MESSAGE",
-					Result:    []byte(fmt.Sprintf(`{"text": %s}`, msg.Content)),
+					Thought:   msg.Content,
+					Action:    "THINK",
+					Result:    []byte(`{}`),
 					Tokens:    0,
 					Timestamp: time.Now(),
 				}
