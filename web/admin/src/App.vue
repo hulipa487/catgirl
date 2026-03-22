@@ -19,19 +19,19 @@
           <div class="card-body" v-if="config">
             <ul class="nav nav-tabs mb-3" id="configTabs" role="tablist">
               <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="llm-tab" data-bs-toggle="tab" data-bs-target="#llm" type="button" role="tab" aria-controls="llm" aria-selected="true">LLM & Agents</button>
+                <button class="nav-link" :class="{ active: activeTab === 'llm' }" @click="activeTab = 'llm'" type="button" role="tab">LLM & Agents</button>
               </li>
               <li class="nav-item" role="presentation">
-                <button class="nav-link" id="telegram-tab" data-bs-toggle="tab" data-bs-target="#telegram" type="button" role="tab" aria-controls="telegram" aria-selected="false">Telegram</button>
+                <button class="nav-link" :class="{ active: activeTab === 'telegram' }" @click="activeTab = 'telegram'" type="button" role="tab">Telegram</button>
               </li>
               <li class="nav-item" role="presentation">
-                <button class="nav-link" id="pool-tab" data-bs-toggle="tab" data-bs-target="#pool" type="button" role="tab" aria-controls="pool" aria-selected="false">Agent Pool</button>
+                <button class="nav-link" :class="{ active: activeTab === 'pool' }" @click="activeTab = 'pool'" type="button" role="tab">Agent Pool</button>
               </li>
             </ul>
 
             <div class="tab-content" id="configTabsContent">
               <!-- LLM Configuration Tab -->
-              <div class="tab-pane fade show active" id="llm" role="tabpanel" aria-labelledby="llm-tab">
+              <div class="tab-pane fade" :class="{ 'show active': activeTab === 'llm' }" v-if="activeTab === 'llm'" role="tabpanel">
                 <h6 class="border-bottom pb-2 mt-2">Prompts & Parameters</h6>
                 <div class="row mb-3">
                   <div class="col-md-6">
@@ -82,7 +82,7 @@
               </div>
 
               <!-- Telegram Configuration Tab -->
-              <div class="tab-pane fade" id="telegram" role="tabpanel" aria-labelledby="telegram-tab">
+              <div class="tab-pane fade" :class="{ 'show active': activeTab === 'telegram' }" v-if="activeTab === 'telegram'" role="tabpanel">
                 <div class="mb-3 mt-3">
                   <label class="form-label">Bot Token</label>
                   <input type="password" class="form-control" v-model="config.telegram.bot_token">
@@ -99,7 +99,7 @@
               </div>
 
               <!-- Agent Pool Configuration Tab -->
-              <div class="tab-pane fade" id="pool" role="tabpanel" aria-labelledby="pool-tab">
+              <div class="tab-pane fade" :class="{ 'show active': activeTab === 'pool' }" v-if="activeTab === 'pool'" role="tabpanel">
                 <div class="row mt-3">
                   <div class="col-md-4 mb-3">
                     <label class="form-label">Min Agents</label>
@@ -170,6 +170,7 @@ import { ref, onMounted } from 'vue'
 const config = ref<any>(null)
 const health = ref<any>(null)
 const saving = ref(false)
+const activeTab = ref('llm')
 
 const fetchConfig = async () => {
   try {
