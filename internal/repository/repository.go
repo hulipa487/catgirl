@@ -150,17 +150,15 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 	}
 	defer tx.Rollback(ctx)
 
-	orchestratorToolsJSON, _ := json.Marshal(cfg.LLM.DefaultOrchestratorTools)
-	agentToolsJSON, _ := json.Marshal(cfg.LLM.DefaultAgentTools)
 	membershipsJSON, _ := json.Marshal(cfg.Auth.AllowedMemberships)
 
 	telegramBotsJSONBytes, _ := json.Marshal(cfg.Telegram.Bots)
 
-	// Upsert System Config
+	// Upsert System Config (per-bot prompts/tools now stored in telegram_bots JSONB)
 	_, err = tx.Exec(ctx, `
 		INSERT INTO system_config (
 			id, max_task_depth, max_queue_size,
-			embedding_dims, max_tokens, timeout_seconds, system_prompt, agent_system_prompt, default_orchestrator_tools, default_agent_tools,
+			embedding_dims, max_tokens, timeout_seconds,
 			min_agents, max_agents, idle_timeout_seconds,
 			snapshot_enabled, snapshot_storage_path, snapshot_max_storage_bytes, snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
 			telegram_bots, telegram_listen_addr,
@@ -170,18 +168,18 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			updated_by, updated_at
 		) VALUES (
 			1, $1, $2,
-			$3, $4, $5, $6, $7, $8, $9,
-			$10, $11, $12,
-			$13, $14, $15, $16, $17, $18, $19,
-			$20, $21,
-			$22, $23, $24,
-			$25, $26, $27, $28,
-			$29, $30, $31, $32, $33, $34, $35,
-			$36, NOW()
+			$3, $4, $5,
+			$6, $7, $8,
+			$9, $10, $11, $12, $13, $14, $15,
+			$16, $17,
+			$18, $19, $20,
+			$21, $22, $23, $24,
+			$25, $26, $27, $28, $29, $30, $31,
+			$32, NOW()
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			max_task_depth = EXCLUDED.max_task_depth, max_queue_size = EXCLUDED.max_queue_size,
-			embedding_dims = EXCLUDED.embedding_dims, max_tokens = EXCLUDED.max_tokens, timeout_seconds = EXCLUDED.timeout_seconds, system_prompt = EXCLUDED.system_prompt, agent_system_prompt = EXCLUDED.agent_system_prompt, default_orchestrator_tools = EXCLUDED.default_orchestrator_tools, default_agent_tools = EXCLUDED.default_agent_tools,
+			embedding_dims = EXCLUDED.embedding_dims, max_tokens = EXCLUDED.max_tokens, timeout_seconds = EXCLUDED.timeout_seconds,
 			min_agents = EXCLUDED.min_agents, max_agents = EXCLUDED.max_agents, idle_timeout_seconds = EXCLUDED.idle_timeout_seconds,
 			snapshot_enabled = EXCLUDED.snapshot_enabled, snapshot_storage_path = EXCLUDED.snapshot_storage_path, snapshot_max_storage_bytes = EXCLUDED.snapshot_max_storage_bytes, snapshot_retention_completed = EXCLUDED.snapshot_retention_completed, snapshot_retention_failed = EXCLUDED.snapshot_retention_failed, snapshot_retention_exited = EXCLUDED.snapshot_retention_exited, snapshot_retention_interrupted = EXCLUDED.snapshot_retention_interrupted,
 			telegram_bots = EXCLUDED.telegram_bots, telegram_listen_addr = EXCLUDED.telegram_listen_addr,
@@ -191,7 +189,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			updated_by = EXCLUDED.updated_by, updated_at = NOW()
 	`,
 		cfg.Global.MaxTaskDepth, cfg.Global.MaxQueueSize,
-		cfg.LLM.EmbeddingDims, cfg.LLM.MaxTokens, cfg.LLM.TimeoutSecs, cfg.LLM.DefaultSystemPrompt, cfg.LLM.DefaultAgentSystemPrompt, orchestratorToolsJSON, agentToolsJSON,
+		cfg.LLM.EmbeddingDims, cfg.LLM.MaxTokens, cfg.LLM.TimeoutSecs,
 		cfg.AgentPool.MinAgents, cfg.AgentPool.MaxAgents, cfg.AgentPool.IdleTimeoutSecs,
 		cfg.Snapshot.Enabled, cfg.Snapshot.StoragePath, cfg.Snapshot.MaxStorageBytes, cfg.Snapshot.Retention.Completed, cfg.Snapshot.Retention.Failed, cfg.Snapshot.Retention.Exited, cfg.Snapshot.Retention.Interrupted,
 		telegramBotsJSONBytes, cfg.Telegram.ListenAddr,

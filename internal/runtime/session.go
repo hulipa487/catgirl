@@ -255,12 +255,6 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 		}
 
 		sysPrompt := botConfig.OrchestratorSystemPrompt
-		if sysPrompt == "" {
-			sysPrompt = s.config.LLM.DefaultSystemPrompt
-			if sysPrompt == "" {
-				sysPrompt = "You are an autonomous agent. You MUST use the SEND_MESSAGE tool to communicate with the user. Any raw text you output will be treated as internal thoughts and the user will not see it."
-			}
-		}
 
 		messages := []llm.ChatMessage{
 			{Role: "system", Content: sysPrompt},
@@ -304,9 +298,6 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 		tools := []llm.Tool{}
 		if err == nil {
 			allowedTools := botConfig.AllowedOrchestratorTools
-			if len(allowedTools) == 0 {
-				allowedTools = s.config.LLM.DefaultOrchestratorTools
-			}
 
 			// Filter based on allowed tools
 			for _, t := range allTools {

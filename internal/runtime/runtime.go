@@ -312,9 +312,6 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 			// Initial task description
 			msg.Role = "user"
 			agentPrompt := botConfig.AgentSystemPrompt
-			if agentPrompt == "" {
-				agentPrompt = rc.config.RuntimeSeed.LLM.DefaultAgentSystemPrompt
-			}
 			msg.Content = fmt.Sprintf(agentPrompt, input.Content)
 
 		case "tool_result":
@@ -344,9 +341,6 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		tools := []llm.Tool{}
 		if err == nil {
 			allowedTools := botConfig.AllowedAgentTools
-			if len(allowedTools) == 0 {
-				allowedTools = rc.config.RuntimeSeed.LLM.DefaultAgentTools
-			}
 
 			// Filter based on allowed tools
 			for _, t := range allTools {
