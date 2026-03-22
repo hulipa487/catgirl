@@ -323,6 +323,16 @@ func (ap *AgentPool) SetAgentBlocking(agentID string, blocking bool) {
 	}
 }
 
+// ResetForNewTask resets the agent's mutex for a new task (caller should hold lock or be single-threaded)
+func (agent *WorkerAgent) ResetForNewTask() {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+	agent.CurrentTask = nil
+	agent.State = AgentStateFree
+	agent.OutputHistory = make([]AgentMessage, 0)
+	agent.PendingToolCalls = make(map[string]*PendingToolCall)
+}
+
 func (agent *WorkerAgent) IsBlocking() bool {
 	agent.mu.Lock()
 	defer agent.mu.Unlock()

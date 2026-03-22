@@ -229,11 +229,10 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	}
 
 	// Reset agent state for new task
-	workerAgent.mu.Lock()
+	workerAgent.ResetForNewTask()
 	workerAgent.CurrentTask = taskInstance
 	workerAgent.State = agent.AgentStateFree
 	workerAgent.OutputHistory = make([]agent.AgentMessage, 0)
-	workerAgent.mu.Unlock()
 
 	// Load tools from database
 	tools, err := LoadToolsFromDB(ctx, rc.repo)
@@ -572,7 +571,7 @@ func (rc *RuntimeCoordinator) SendToolResultToAgent(agentID string, toolID strin
 		return fmt.Errorf("agent %s is not registered for callback", agentID)
 	}
 
-	agent, ok := rc.agentPool.GetAgent(agentID)
+	workerAgent, ok := rc.agentPool.GetAgent(agentID)
 	if !ok {
 		return fmt.Errorf("agent %s not found", agentID)
 	}
@@ -585,7 +584,7 @@ func (rc *RuntimeCoordinator) SendToolResultToAgent(agentID string, toolID strin
 		Content: result,
 	}
 
-	if !agent.SendInput(input) {
+	if !workerAgent.SendInput(input) {
 		return fmt.Errorf("failed to send input to agent %s queue", agentID)
 	}
 

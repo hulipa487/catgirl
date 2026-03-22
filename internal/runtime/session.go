@@ -289,9 +289,6 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 			}
 			messages = append(messages, assistantMsg)
 
-			// Track if SEND_MESSAGE was called - if so, don't send follow-up text content
-			sentViaTool := false
-
 			// Process each tool call and collect tool responses
 			for _, tc := range msg.ToolCalls {
 				s.logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Main Orchestrator called tool")
@@ -304,7 +301,6 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 
 				switch tc.Function.Name {
 				case "SEND_MESSAGE":
-					sentViaTool = true
 					if text, ok := args["message"].(string); ok {
 						if s.OnReply != nil {
 							s.OnReply(telegramUserID, text)
