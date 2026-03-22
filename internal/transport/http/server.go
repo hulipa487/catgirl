@@ -105,21 +105,30 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 	}
 }
 
-// authMiddleware validates the mtfpass JWT cookie and requires admin role
+// authMiddleware validates the mtfpass JWT token (via cookie or Bearer header) and requires admin role
 func authMiddleware(authSvc *auth.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Get mtf_auth cookie
-		cookie, err := c.Cookie("mtf_auth")
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"error":   "missing authentication cookie",
-			})
-			return
+		var token string
+
+		// First try to get token from Authorization header (Bearer token)
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			token = authHeader[7:]
+		} else {
+			// Fallback to cookie
+			var err error
+			token, err = c.Cookie("mtf_auth")
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"success": false,
+					"error":   "missing authentication token",
+				})
+				return
+			}
 		}
 
 		// Validate token with mtfpass - only admin role is allowed
-		result, err := authSvc.Authorize(c.Request.Context(), cookie)
+		result, err := authSvc.Authorize(c.Request.Context(), token)
 		if err != nil || !result.Authorized {
 			reason := "authentication failed"
 			if result != nil && result.Reason != "" {

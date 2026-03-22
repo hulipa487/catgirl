@@ -611,19 +611,20 @@ const showToast = (id: string) => {
 
 let healthInterval: any;
 
-// Check authentication by trying to fetch config
-// If 401/403, redirect to mtfpass login
-const checkAuth = async (): Promise<boolean> => {
+// Check authentication by trying to call the protected API endpoint
+// The browser will automatically include the mtf_auth cookie (HttpOnly) for same-origin requests
+const checkAuth = async (): Promise<any> => {
   try {
+    // Try to fetch a protected endpoint - the browser will send the cookie automatically
     const res = await fetch('/api/v1/config', {
-      credentials: 'include'
+      credentials: 'include'  // This ensures cookies are sent with the request
     })
     if (!res.ok) {
-      return false
+      return null
     }
-    return true
+    return { authenticated: true }
   } catch {
-    return false
+    return null
   }
 }
 
