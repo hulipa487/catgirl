@@ -34,8 +34,7 @@ CREATE TABLE IF NOT EXISTS system_config (
     snapshot_retention_interrupted VARCHAR(50) DEFAULT '14d',
 
     -- Telegram
-    telegram_bot_token VARCHAR(255) DEFAULT '',
-    telegram_webhook_url VARCHAR(500) DEFAULT '',
+    telegram_bots JSONB DEFAULT '[]'::jsonb,
     telegram_listen_addr VARCHAR(255) DEFAULT '',
 
     -- Auth

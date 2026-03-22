@@ -130,7 +130,7 @@
 
                     <label class="form-label fw-semibold">Orchestrator Tools (comma separated)</label>
                     <p class="text-muted small mb-2">Which tools the main orchestrator loop is allowed to use.</p>
-                    <input type="text" class="form-control form-control-sm mb-4" :value="config.llm.default_orchestrator_tools?.join(', ')" @input="e => updateTools('default_orchestrator_tools', (e.target as HTMLInputElement).value)">
+                    <input type="text" class="form-control form-control-sm mb-4" :value="config.llm.default_orchestrator_tools?.join(', ')" @input="e => updateTools(config.llm, 'default_orchestrator_tools', (e.target as HTMLInputElement).value)">
                   </div>
 
                   <div class="col-md-6">
@@ -140,7 +140,7 @@
 
                     <label class="form-label fw-semibold">Agent Tools (comma separated)</label>
                     <p class="text-muted small mb-2">Which tools the sub-agents are allowed to use to perform work.</p>
-                    <input type="text" class="form-control form-control-sm" :value="config.llm.default_agent_tools?.join(', ')" @input="e => updateTools('default_agent_tools', (e.target as HTMLInputElement).value)">
+                    <input type="text" class="form-control form-control-sm" :value="config.llm.default_agent_tools?.join(', ')" @input="e => updateTools(config.llm, 'default_agent_tools', (e.target as HTMLInputElement).value)">
                   </div>
                 </div>
               </div>
@@ -310,35 +310,104 @@
 
           <!-- TELEGRAM TAB -->
           <div v-if="activeTab === 'telegram'">
-            <div class="card">
-              <div class="card-header">Telegram Bot Credentials</div>
+            <div class="card mb-4">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Telegram Bots & Session Overrides</span>
+                <button class="btn btn-sm btn-primary" @click="addBot()">
+                  <i class="bi bi-plus"></i> Add Telegram Bot
+                </button>
+              </div>
               <div class="card-body">
-                <div class="mb-4">
-                  <label class="form-label fw-semibold">Bot API Token</label>
-                  <div class="input-group">
-                    <span class="input-group-text"><i class="bi bi-robot"></i></span>
-                    <input type="password" class="form-control" v-model="config.telegram.bot_token" placeholder="1234567890:AAH...">
-                  </div>
-                  <div class="form-text">Get this from @BotFather on Telegram.</div>
+                <div v-if="!config.telegram.bots || config.telegram.bots.length === 0" class="text-center py-4 text-muted">
+                  No telegram bots configured. Click "Add Telegram Bot" above.
                 </div>
 
-                <div class="row">
-                  <div class="col-md-8 mb-3">
-                    <label class="form-label fw-semibold">Public Webhook URL</label>
-                    <div class="input-group">
-                      <span class="input-group-text"><i class="bi bi-globe"></i></span>
-                      <input type="url" class="form-control" v-model="config.telegram.webhook_url" placeholder="https://your-domain.com/telegram/webhook">
-                    </div>
-                    <div class="form-text">Must be an HTTPS endpoint accessible by Telegram servers.</div>
+                <div v-for="(bot, index) in config.telegram.bots" :key="'bot'+index" class="card mb-4 border-primary">
+                  <div class="card-header bg-primary text-white d-flex justify-content-between py-2 align-items-center">
+                    <span class="fw-bold">Bot #{{ index + 1 }}</span>
+                    <button class="btn btn-sm btn-outline-light" @click="config.telegram.bots.splice(index, 1)" title="Remove Bot">
+                      <i class="bi bi-trash"></i>
+                    </button>
                   </div>
-                  <div class="col-md-4 mb-3">
-                    <label class="form-label fw-semibold">Local Listen Address</label>
-                    <input type="text" class="form-control" v-model="config.telegram.listen_addr" placeholder="0.0.0.0:8081">
-                    <div class="form-text">The local interface and port to bind to.</div>
+                  <div class="card-body">
+                    <div class="row">
+                      <div class="col-md-6 mb-3">
+                        <label class="form-label fw-semibold">Bot API Token</label>
+                        <div class="input-group input-group-sm">
+                          <span class="input-group-text"><i class="bi bi-robot"></i></span>
+                          <input type="password" class="form-control" v-model="bot.bot_token" placeholder="1234567890:AAH...">
+                        </div>
+                      </div>
+                      <div class="col-md-6 mb-3">
+                        <label class="form-label fw-semibold">Public Webhook URL</label>
+                        <div class="input-group input-group-sm">
+                          <span class="input-group-text"><i class="bi bi-globe"></i></span>
+                          <input type="url" class="form-control" v-model="bot.webhook_url" placeholder="https://your-domain.com/telegram/webhook">
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="accordion" :id="'botAccordion'+index">
+                      <div class="accordion-item">
+                        <h2 class="accordion-header">
+                          <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" :data-bs-target="'#collapse'+index">
+                            Session Overrides (Prompts, Tools, Models)
+                          </button>
+                        </h2>
+                        <div :id="'collapse'+index" class="accordion-collapse collapse" :data-bs-parent="'#botAccordion'+index">
+                          <div class="accordion-body bg-light">
+
+                            <div class="row mb-3">
+                              <div class="col-md-6">
+                                <label class="form-label fw-semibold small mb-1">Orchestrator System Prompt (Override)</label>
+                                <textarea class="form-control font-monospace small text-muted mb-2" v-model="bot.orchestrator_system_prompt" rows="2" placeholder="Leave blank to use default"></textarea>
+
+                                <label class="form-label fw-semibold small mb-1">Allowed Orchestrator Tools</label>
+                                <input type="text" class="form-control form-control-sm" :value="bot.allowed_orchestrator_tools?.join(', ')" @input="e => updateTools(bot, 'allowed_orchestrator_tools', (e.target as HTMLInputElement).value)" placeholder="Leave blank to use default">
+                              </div>
+
+                              <div class="col-md-6">
+                                <label class="form-label fw-semibold small mb-1">Agent System Prompt (Override)</label>
+                                <textarea class="form-control font-monospace small text-muted mb-2" v-model="bot.agent_system_prompt" rows="2" placeholder="Leave blank to use default"></textarea>
+
+                                <label class="form-label fw-semibold small mb-1">Allowed Agent Tools</label>
+                                <input type="text" class="form-control form-control-sm" :value="bot.allowed_agent_tools?.join(', ')" @input="e => updateTools(bot, 'allowed_agent_tools', (e.target as HTMLInputElement).value)" placeholder="Leave blank to use default">
+                              </div>
+                            </div>
+
+                            <div class="row">
+                              <div class="col-md-6">
+                                <label class="form-label fw-semibold small mb-1">Pin GP Model</label>
+                                <input type="text" class="form-control form-control-sm" v-model="bot.gp_model" placeholder="eg. claude-3-opus-20240229">
+                                <div class="form-text" style="font-size: 0.7rem">Forces all tasks in this session to use this specific model.</div>
+                              </div>
+                              <div class="col-md-6">
+                                <label class="form-label fw-semibold small mb-1">Pin Reasoner Model</label>
+                                <input type="text" class="form-control form-control-sm" v-model="bot.reasoner_model" placeholder="eg. gpt-4-turbo">
+                              </div>
+                            </div>
+
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                   </div>
                 </div>
               </div>
             </div>
+
+            <div class="card mb-4">
+              <div class="card-header">Server Bind Settings</div>
+              <div class="card-body">
+                <div class="mb-2">
+                  <label class="form-label fw-semibold">Local Listen Address</label>
+                  <input type="text" class="form-control" v-model="config.telegram.listen_addr" placeholder="0.0.0.0:8081">
+                  <div class="form-text">The local interface and port that the Golang application will bind to for receiving ALL webhook POST requests.</div>
+                </div>
+              </div>
+            </div>
+
           </div>
 
           <!-- POOL TAB -->
@@ -485,12 +554,35 @@ const saveConfig = async () => {
   }
 }
 
-const updateTools = (toolType: 'default_orchestrator_tools' | 'default_agent_tools', val: string) => {
-  config.value.llm[toolType] = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
+const updateTools = (target: any, propKey: string, val: string) => {
+  target[propKey] = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
+}
+
+const addBot = () => {
+  if (!config.value.telegram.bots) config.value.telegram.bots = []
+  config.value.telegram.bots.push({
+    bot_token: '',
+    webhook_url: '',
+    orchestrator_system_prompt: '',
+    agent_system_prompt: '',
+    allowed_orchestrator_tools: [],
+    allowed_agent_tools: [],
+    gp_model: '',
+    reasoner_model: ''
+  })
+}
+  provider.models = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
 }
 
 const updateModels = (provider: any, val: string) => {
-  provider.models = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
+  if (!config.value.llm[listName]) {
+    config.value.llm[listName] = []
+  }
+  config.value.llm[listName].push({
+    base_url: 'https://api.openai.com/v1',
+    api_key: '',
+    models: ['gpt-4o']
+  })
 }
 
 const addProvider = (listName: 'providers' | 'reasoner_providers' | 'embedding_providers') => {

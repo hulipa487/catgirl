@@ -47,9 +47,11 @@ EXITED = "7d"
 INTERRUPTED = "14d"
 
 [telegram]
+listen_addr = "0.0.0.0:8081"
+
+[[telegram.bots]]
 bot_token = "your_telegram_bot_token_here"
 webhook_url = "https://your-domain.com/telegram/webhook"
-listen_addr = "0.0.0.0:8081"
 
 [server]
 host = "0.0.0.0"

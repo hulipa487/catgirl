@@ -132,6 +132,45 @@ func (h *Handlers) GetSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"session": session})
 }
 
+func (h *Handlers) UpdateSessionSettings(c *gin.Context) {
+	sessionIDStr := c.Param("session_id")
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id"})
+		return
+	}
+
+	var newSettings models.SessionSettings
+	if err := c.ShouldBindJSON(&newSettings); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	repo := h.runtime.GetRepository()
+
+	session, err := repo.GetSession(ctx, sessionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if session == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+
+	session.Settings = newSettings
+	if err := repo.UpdateSession(ctx, session); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "session settings updated successfully",
+		"session": session,
+	})
+}
+
 func (h *Handlers) ListTasks(c *gin.Context) {
 	ctx := c.Request.Context()
 	taskSvc := h.runtime.GetTaskService()

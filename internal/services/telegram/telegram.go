@@ -11,11 +11,11 @@ import (
 )
 
 type TelegramService struct {
-	bot       *tgbotapi.BotAPI
-	config    *config.TelegramConfig
-	repo      *repository.Repository
+	bots       []*tgbotapi.BotAPI
+	config     *config.TelegramConfig
+	repo       *repository.Repository
 	sessionSvc TelegramSessionService
-	logger    zerolog.Logger
+	logger     zerolog.Logger
 }
 
 type TelegramSessionService interface {
@@ -31,8 +31,8 @@ type TelegramSession struct {
 }
 
 func NewTelegramService(cfg *config.TelegramConfig, repo *repository.Repository, sessionSvc TelegramSessionService, logger zerolog.Logger) (*TelegramService, error) {
-	if cfg.BotToken == "" {
-		logger.Warn().Msg("Telegram BotToken is empty. Telegram integration will be disabled until configured.")
+	if len(cfg.Bots) == 0 {
+		logger.Warn().Msg("Telegram Bots list is empty. Telegram integration will be disabled until configured.")
 		return &TelegramService{
 			config:     cfg,
 			repo:       repo,
@@ -41,21 +41,22 @@ func NewTelegramService(cfg *config.TelegramConfig, repo *repository.Repository,
 		}, nil
 	}
 
-	bot, err := tgbotapi.NewBotAPI(cfg.BotToken)
-	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to create Telegram bot. Telegram integration will be disabled until reconfigured.")
-		return &TelegramService{
-			config:     cfg,
-			repo:       repo,
-			sessionSvc: sessionSvc,
-			logger:     logger,
-		}, nil
+	var bots []*tgbotapi.BotAPI
+	for _, bCfg := range cfg.Bots {
+		if bCfg.BotToken == "" {
+			continue
+		}
+		bot, err := tgbotapi.NewBotAPI(bCfg.BotToken)
+		if err != nil {
+			logger.Warn().Err(err).Msg("Failed to create Telegram bot instance. Skipping.")
+			continue
+		}
+		bot.Debug = false
+		bots = append(bots, bot)
 	}
-
-	bot.Debug = false
 
 	svc := &TelegramService{
-		bot:        bot,
+		bots:       bots,
 		config:     cfg,
 		repo:       repo,
 		sessionSvc: sessionSvc,
@@ -66,23 +67,28 @@ func NewTelegramService(cfg *config.TelegramConfig, repo *repository.Repository,
 }
 
 func (s *TelegramService) SetWebhook(ctx context.Context) error {
-	if s.bot == nil {
-		return fmt.Errorf("telegram bot not initialized")
+	if len(s.bots) == 0 {
+		return fmt.Errorf("no telegram bots initialized")
 	}
 
-	wh, err := tgbotapi.NewWebhook(s.config.WebhookURL)
-	if err != nil {
-		return fmt.Errorf("failed to create webhook config: %w", err)
-	}
+	for i, bot := range s.bots {
+		webhookURL := s.config.Bots[i].WebhookURL
+		wh, err := tgbotapi.NewWebhook(webhookURL)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("failed to create webhook config for bot")
+			continue
+		}
 
-	_, err = s.bot.Request(wh)
-	if err != nil {
-		return fmt.Errorf("failed to set webhook: %w", err)
-	}
+		_, err = bot.Request(wh)
+		if err != nil {
+			s.logger.Error().Err(err).Str("webhook_url", webhookURL).Msg("failed to set webhook for bot")
+			continue
+		}
 
-	s.logger.Info().
-		Str("webhook_url", s.config.WebhookURL).
-		Msg("webhook set")
+		s.logger.Info().
+			Str("webhook_url", webhookURL).
+			Msg("webhook set successfully")
+	}
 
 	return nil
 }

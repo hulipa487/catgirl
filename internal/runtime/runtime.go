@@ -249,6 +249,19 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 		return fmt.Errorf("failed to get session context")
 	}
 
+	var botConfig *config.TelegramBotConfig
+	for _, b := range rc.config.RuntimeSeed.Telegram.Bots {
+		if b.BotToken == session.BotToken {
+			bCopy := b
+			botConfig = &bCopy
+			break
+		}
+	}
+	if botConfig == nil {
+		logger.Warn().Str("bot_token", session.BotToken).Msg("Bot config not found for agent execution, using defaults")
+		botConfig = &config.TelegramBotConfig{}
+	}
+
 	// Reset agent state for new task
 	workerAgent.ResetForNewTask()
 	workerAgent.CurrentTask = taskInstance
@@ -276,11 +289,11 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	}
 
 	// Run the agent's main loop - this blocks until agent signals "free" state
-	return rc.runAgentLoop(workerAgent, taskInstance, session, logger)
+	return rc.runAgentLoop(workerAgent, taskInstance, session, botConfig, logger)
 }
 
 // runAgentLoop processes inputs from the agent's queue and calls the LLM
-func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskInstance *models.TaskInstance, session *Session, logger zerolog.Logger) error {
+func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskInstance *models.TaskInstance, session *Session, botConfig *config.TelegramBotConfig, logger zerolog.Logger) error {
 	ctx := context.Background()
 	now := time.Now()
 
@@ -298,7 +311,7 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		case "task_start":
 			// Initial task description
 			msg.Role = "user"
-			agentPrompt := session.Settings.AgentSystemPrompt
+			agentPrompt := botConfig.AgentSystemPrompt
 			if agentPrompt == "" {
 				agentPrompt = rc.config.RuntimeSeed.LLM.DefaultAgentSystemPrompt
 			}
@@ -330,7 +343,7 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		allTools, err := LoadToolsFromDB(ctx, rc.repo)
 		tools := []llm.Tool{}
 		if err == nil {
-			allowedTools := session.Settings.AllowedAgentTools
+			allowedTools := botConfig.AllowedAgentTools
 			if len(allowedTools) == 0 {
 				allowedTools = rc.config.RuntimeSeed.LLM.DefaultAgentTools
 			}
@@ -351,7 +364,12 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		}
 
 		// Call LLM
-		model := rc.llmSvc.GetRandomGPModel(session.Settings.GPModel)
+		var model config.ModelConfig
+		if taskInstance.AgentType == models.AgentTypeReasoner {
+			model = rc.llmSvc.GetRandomReasonerModel(botConfig.ReasonerModel)
+		} else {
+			model = rc.llmSvc.GetRandomGPModel(botConfig.GPModel)
+		}
 		resp, err := rc.llmSvc.ChatWithTools(ctx, model, llmMessages, tools, 0)
 		if err != nil || len(resp.Choices) == 0 {
 			logger.Error().Err(err).Msg("LLM call failed")

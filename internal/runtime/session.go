@@ -37,8 +37,8 @@ type OrchestratorState struct {
 type Session struct {
 	ID             uuid.UUID
 	TelegramUserID int64
+	BotToken       string
 	State          *OrchestratorState
-	Settings       *models.SessionSettings
 	LTM            *LongTermMemoryManager
 	History        *ConversationHistoryManager
 	InputQueue     chan string // Queue for async messages from telegram/subtasks
@@ -72,23 +72,18 @@ func NewSessionService(repo *repository.Repository, cfg *config.RuntimeConfig, l
 	}
 }
 
-func (s *SessionService) CreateSession(ctx context.Context, telegramUserID int64, username, firstName, lastName string) (*Session, error) {
+func (s *SessionService) CreateSession(ctx context.Context, telegramUserID int64, botToken string, username, firstName, lastName string) (*Session, error) {
 	sessionID := uuid.New()
 	now := time.Now()
 
 	session := &models.Session{
 		ID:             sessionID,
 		TelegramUserID: telegramUserID,
+		BotToken:       botToken,
 		Name:           fmt.Sprintf("session_%s", sessionID.String()[:8]),
 		Status:         models.SessionStatusActive,
-		Settings: models.SessionSettings{
-			OrchestratorSystemPrompt: s.config.LLM.DefaultSystemPrompt,
-			AgentSystemPrompt:        s.config.LLM.DefaultAgentSystemPrompt,
-			AllowedOrchestratorTools: s.config.LLM.DefaultOrchestratorTools,
-			AllowedAgentTools:        s.config.LLM.DefaultAgentTools,
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	if err := s.repo.CreateSession(ctx, session); err != nil {
@@ -102,8 +97,8 @@ func (s *SessionService) CreateSession(ctx context.Context, telegramUserID int64
 	sess := &Session{
 		ID:             sessionID,
 		TelegramUserID: telegramUserID,
+		BotToken:       botToken,
 		State:          &OrchestratorState{},
-		Settings:       &session.Settings,
 		History:        NewConversationHistoryManager(sessionID, s.repo, &s.config.Context),
 		InputQueue:     make(chan string, 100),
 		CreatedAt:      now,
@@ -149,8 +144,8 @@ func (s *SessionService) GetSession(ctx context.Context, sessionID uuid.UUID) (*
 	sess := &Session{
 		ID:             sessionModel.ID,
 		TelegramUserID: sessionModel.TelegramUserID,
+		BotToken:       sessionModel.BotToken,
 		State:          &state,
-		Settings:       &sessionModel.Settings,
 		History:        NewConversationHistoryManager(sessionModel.ID, s.repo, &s.config.Context),
 		InputQueue:     make(chan string, 100), // Input queue for the session
 		CreatedAt:      sessionModel.CreatedAt,
@@ -178,8 +173,8 @@ func (s *SessionService) GetSessionIDByTelegramUser(ctx context.Context, telegra
 	return session.ID, nil
 }
 
-func (s *SessionService) CreateSessionForTelegramUser(ctx context.Context, telegramUserID int64, username, firstName, lastName string) (interface{}, error) {
-	session, err := s.CreateSession(ctx, telegramUserID, username, firstName, lastName)
+func (s *SessionService) CreateSessionForTelegramUser(ctx context.Context, telegramUserID int64, botToken string, username, firstName, lastName string) (interface{}, error) {
+	session, err := s.CreateSession(ctx, telegramUserID, botToken, username, firstName, lastName)
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +239,27 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 		// Get recent context
 		recentTurns := session.History.GetRecentTurns(session.History.cfg.PreserveRecentTurns)
 
-		sysPrompt := session.Settings.OrchestratorSystemPrompt
+		var botConfig *config.TelegramBotConfig
+		for _, b := range s.config.Telegram.Bots {
+			if b.BotToken == session.BotToken {
+				bCopy := b
+				botConfig = &bCopy
+				break
+			}
+		}
+
+		if botConfig == nil {
+			s.logger.Error().Str("bot_token", session.BotToken).Msg("Bot config not found for session")
+			// Fallback to avoid panic
+			botConfig = &config.TelegramBotConfig{}
+		}
+
+		sysPrompt := botConfig.OrchestratorSystemPrompt
 		if sysPrompt == "" {
 			sysPrompt = s.config.LLM.DefaultSystemPrompt
+			if sysPrompt == "" {
+				sysPrompt = "You are an autonomous agent. You MUST use the SEND_MESSAGE tool to communicate with the user. Any raw text you output will be treated as internal thoughts and the user will not see it."
+			}
 		}
 
 		messages := []llm.ChatMessage{
@@ -290,7 +303,7 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 		allTools, err := LoadToolsFromDB(context.Background(), s.repo)
 		tools := []llm.Tool{}
 		if err == nil {
-			allowedTools := session.Settings.AllowedOrchestratorTools
+			allowedTools := botConfig.AllowedOrchestratorTools
 			if len(allowedTools) == 0 {
 				allowedTools = s.config.LLM.DefaultOrchestratorTools
 			}
@@ -310,7 +323,7 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 			s.logger.Warn().Msg("No tools loaded for orchestrator")
 		}
 
-		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(session.Settings.GPModel), messages, tools, 0)
+		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(botConfig.GPModel), messages, tools, 0)
 
 		if err != nil || len(resp.Choices) == 0 {
 			s.logger.Error().Err(err).Msg("Failed to call LLM for reply")

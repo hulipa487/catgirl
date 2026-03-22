@@ -34,17 +34,17 @@ type RuntimeConfig struct {
 }
 
 type GlobalConfig struct {
-	MaxTaskDepth int `mapstructure:"max_task_depth"`
-	MaxQueueSize int `mapstructure:"max_queue_size"`
+	MaxTaskDepth int `mapstructure:"max_task_depth" json:"max_task_depth"`
+	MaxQueueSize int `mapstructure:"max_queue_size" json:"max_queue_size"`
 }
 
 type DatabaseConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	DBName   string `mapstructure:"dbname"`
-	SSLMode  string `mapstructure:"sslmode"`
+	Host     string `mapstructure:"host" json:"host"`
+	Port     int    `mapstructure:"port" json:"port"`
+	User     string `mapstructure:"user" json:"user"`
+	Password string `mapstructure:"password" json:"password"`
+	DBName   string `mapstructure:"dbname" json:"dbname"`
+	SSLMode  string `mapstructure:"sslmode" json:"sslmode"`
 }
 
 func (d DatabaseConfig) DSN() string {
@@ -55,9 +55,9 @@ func (d DatabaseConfig) DSN() string {
 }
 
 type ModelProviderConfig struct {
-	BaseURL string   `mapstructure:"base_url"`
-	APIKey  string   `mapstructure:"api_key"`
-	Models  []string `mapstructure:"models"`
+	BaseURL string   `mapstructure:"base_url" json:"base_url"`
+	APIKey  string   `mapstructure:"api_key" json:"api_key"`
+	Models  []string `mapstructure:"models" json:"models"`
 }
 
 type LLMConfig struct {
@@ -69,41 +69,51 @@ type LLMConfig struct {
 	TimeoutSecs        int                   `mapstructure:"timeout_seconds" json:"timeout_seconds"`
 
 	// Session Defaults
-	DefaultSystemPrompt       string   `mapstructure:"default_system_prompt" json:"default_system_prompt"`
-	DefaultAgentSystemPrompt  string   `mapstructure:"default_agent_system_prompt" json:"default_agent_system_prompt"`
-	DefaultOrchestratorTools  []string `mapstructure:"default_orchestrator_tools" json:"default_orchestrator_tools"`
-	DefaultAgentTools         []string `mapstructure:"default_agent_tools" json:"default_agent_tools"`
+	DefaultSystemPrompt      string   `mapstructure:"default_system_prompt" json:"default_system_prompt"`
+	DefaultAgentSystemPrompt string   `mapstructure:"default_agent_system_prompt" json:"default_agent_system_prompt"`
+	DefaultOrchestratorTools []string `mapstructure:"default_orchestrator_tools" json:"default_orchestrator_tools"`
+	DefaultAgentTools        []string `mapstructure:"default_agent_tools" json:"default_agent_tools"`
 }
 
 type AgentPoolConfig struct {
-	MinAgents       int `mapstructure:"min_agents"`
-	MaxAgents       int `mapstructure:"max_agents"`
-	IdleTimeoutSecs int `mapstructure:"idle_timeout_seconds"`
+	MinAgents       int `mapstructure:"min_agents" json:"min_agents"`
+	MaxAgents       int `mapstructure:"max_agents" json:"max_agents"`
+	IdleTimeoutSecs int `mapstructure:"idle_timeout_seconds" json:"idle_timeout_seconds"`
 }
 
 type SnapshotConfig struct {
-	Enabled           bool            `mapstructure:"enabled"`
-	Retention         RetentionConfig `mapstructure:"retention"`
-	StoragePath       string          `mapstructure:"storage_path"`
-	MaxStorageBytes   int64           `mapstructure:"max_storage_bytes"`
+	Enabled         bool            `mapstructure:"enabled" json:"enabled"`
+	Retention       RetentionConfig `mapstructure:"retention" json:"retention"`
+	StoragePath     string          `mapstructure:"storage_path" json:"storage_path"`
+	MaxStorageBytes int64           `mapstructure:"max_storage_bytes" json:"max_storage_bytes"`
 }
 
 type RetentionConfig struct {
-	Completed  string `mapstructure:"COMPLETED"`
-	Failed     string `mapstructure:"FAILED"`
-	Exited     string `mapstructure:"EXITED"`
-	Interrupted string `mapstructure:"INTERRUPTED"`
+	Completed   string `mapstructure:"COMPLETED" json:"COMPLETED"`
+	Failed      string `mapstructure:"FAILED" json:"FAILED"`
+	Exited      string `mapstructure:"EXITED" json:"EXITED"`
+	Interrupted string `mapstructure:"INTERRUPTED" json:"INTERRUPTED"`
+}
+
+type TelegramBotConfig struct {
+	BotToken                 string   `mapstructure:"bot_token" json:"bot_token"`
+	WebhookURL               string   `mapstructure:"webhook_url" json:"webhook_url"`
+	OrchestratorSystemPrompt string   `mapstructure:"orchestrator_system_prompt" json:"orchestrator_system_prompt"`
+	AgentSystemPrompt        string   `mapstructure:"agent_system_prompt" json:"agent_system_prompt"`
+	AllowedOrchestratorTools []string `mapstructure:"allowed_orchestrator_tools" json:"allowed_orchestrator_tools"`
+	AllowedAgentTools        []string `mapstructure:"allowed_agent_tools" json:"allowed_agent_tools"`
+	GPModel                  string   `mapstructure:"gp_model" json:"gp_model"`
+	ReasonerModel            string   `mapstructure:"reasoner_model" json:"reasoner_model"`
 }
 
 type TelegramConfig struct {
-	BotToken  string `mapstructure:"bot_token"`
-	WebhookURL string `mapstructure:"webhook_url"`
-	ListenAddr string `mapstructure:"listen_addr"`
+	Bots       []TelegramBotConfig `mapstructure:"bots" json:"bots"`
+	ListenAddr string              `mapstructure:"listen_addr" json:"listen_addr"`
 }
 
 type ServerConfig struct {
-	Host string `mapstructure:"host"`
-	Port int    `mapstructure:"port"`
+	Host string `mapstructure:"host" json:"host"`
+	Port int    `mapstructure:"port" json:"port"`
 }
 
 func (s ServerConfig) Addr() string {
@@ -111,35 +121,35 @@ func (s ServerConfig) Addr() string {
 }
 
 type AuthConfig struct {
-	JWTSecret          string `mapstructure:"jwt_secret"`
-	JWTIssuer          string `mapstructure:"jwt_issuer"`
-	AllowedMemberships []string `mapstructure:"allowed_memberships"`
+	JWTSecret          string   `mapstructure:"jwt_secret" json:"jwt_secret"`
+	JWTIssuer          string   `mapstructure:"jwt_issuer" json:"jwt_issuer"`
+	AllowedMemberships []string `mapstructure:"allowed_memberships" json:"allowed_memberships"`
 }
 
 type ContextConfig struct {
-	MaxTokens            int     `mapstructure:"max_tokens"`
-	CompactionThreshold  float64 `mapstructure:"compaction_threshold"`
-	PreserveRecentTurns  int     `mapstructure:"preserve_recent_turns"`
-	CompactionAgentType  string  `mapstructure:"compaction_agent_type"`
+	MaxTokens           int     `mapstructure:"max_tokens" json:"max_tokens"`
+	CompactionThreshold float64 `mapstructure:"compaction_threshold" json:"compaction_threshold"`
+	PreserveRecentTurns int     `mapstructure:"preserve_recent_turns" json:"preserve_recent_turns"`
+	CompactionAgentType string  `mapstructure:"compaction_agent_type" json:"compaction_agent_type"`
 }
 
 type RAGConfig struct {
-	Enabled      bool               `mapstructure:"enabled"`
-	DefaultTopK  int                `mapstructure:"default_top_k"`
-	AutoRetrieve AutoRetrieveConfig `mapstructure:"auto_retrieve"`
-	MinSimilarity float64          `mapstructure:"min_similarity"`
+	Enabled       bool               `mapstructure:"enabled" json:"enabled"`
+	DefaultTopK   int                `mapstructure:"default_top_k" json:"default_top_k"`
+	AutoRetrieve  AutoRetrieveConfig `mapstructure:"auto_retrieve" json:"auto_retrieve"`
+	MinSimilarity float64            `mapstructure:"min_similarity" json:"min_similarity"`
 }
 
 type AutoRetrieveConfig struct {
-	Enabled     bool `mapstructure:"enabled"`
-	OnLLMCall   bool `mapstructure:"on_llm_call"`
-	TopK        int  `mapstructure:"top_k"`
-	MaxResults  int  `mapstructure:"max_results"`
+	Enabled    bool `mapstructure:"enabled" json:"enabled"`
+	OnLLMCall  bool `mapstructure:"on_llm_call" json:"on_llm_call"`
+	TopK       int  `mapstructure:"top_k" json:"top_k"`
+	MaxResults int  `mapstructure:"max_results" json:"max_results"`
 }
 
 type LoggingConfig struct {
-	Level  string `mapstructure:"level"`
-	Format string `mapstructure:"format"`
+	Level  string `mapstructure:"level" json:"level"`
+	Format string `mapstructure:"format" json:"format"`
 }
 
 func Load(configPath string) (*Config, error) {
@@ -220,11 +230,13 @@ func (c *RuntimeConfig) Validate() error {
 			return fmt.Errorf("llm.embedding_providers[%d] requires at least one model", i)
 		}
 	}
-	if c.Telegram.BotToken == "" {
-		return fmt.Errorf("telegram.bot_token is required")
-	}
-	if c.Telegram.WebhookURL == "" {
-		return fmt.Errorf("telegram.webhook_url is required")
+	for i, b := range c.Telegram.Bots {
+		if b.BotToken == "" {
+			return fmt.Errorf("telegram.bots[%d].bot_token is required", i)
+		}
+		if b.WebhookURL == "" {
+			return fmt.Errorf("telegram.bots[%d].webhook_url is required", i)
+		}
 	}
 	if c.Global.MaxTaskDepth == 0 {
 		c.Global.MaxTaskDepth = 3

@@ -35,7 +35,8 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	var minAgents, maxAgents, idleTimeoutSecs int
 	var snapshotEnabled bool
 	var snapshotStoragePath, snapshotRetCompleted, snapshotRetFailed, snapshotRetExited, snapshotRetInterrupted string
-	var telegramBotToken, telegramWebhookURL, telegramListenAddr string
+	var telegramBotsJSON json.RawMessage
+	var telegramListenAddr string
 	var authJwtSecret, authJwtIssuer string
 	var authAllowedMemberships json.RawMessage
 	var contextMaxTokens, contextPreserveRecentTurns int
@@ -53,7 +54,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 			min_agents, max_agents, idle_timeout_seconds,
 			snapshot_enabled, snapshot_storage_path, snapshot_max_storage_bytes,
 			snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
-			telegram_bot_token, telegram_webhook_url, telegram_listen_addr,
+			telegram_bots, telegram_listen_addr,
 			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
 			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
 			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity
@@ -64,7 +65,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		&minAgents, &maxAgents, &idleTimeoutSecs,
 		&snapshotEnabled, &snapshotStoragePath, &snapshotMaxStorageBytes,
 		&snapshotRetCompleted, &snapshotRetFailed, &snapshotRetExited, &snapshotRetInterrupted,
-		&telegramBotToken, &telegramWebhookURL, &telegramListenAddr,
+		&telegramBotsJSON, &telegramListenAddr,
 		&authJwtSecret, &authJwtIssuer, &authAllowedMemberships,
 		&contextMaxTokens, &contextCompactionThreshold, &contextPreserveRecentTurns, &contextCompactionAgentType,
 		&ragEnabled, &ragDefaultTopK, &ragAutoRetrieveEnabled, &ragAutoRetrieveOnLlmCall, &ragAutoRetrieveTopK, &ragAutoRetrieveMaxResults, &ragMinSimilarity,
@@ -111,6 +112,9 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	_ = json.Unmarshal(defaultOrchestratorToolsJSON, &defaultOrchestratorTools)
 	_ = json.Unmarshal(defaultAgentToolsJSON, &defaultAgentTools)
 
+	var telegramBots []config.TelegramBotConfig
+	_ = json.Unmarshal(telegramBotsJSON, &telegramBots)
+
 	return &config.RuntimeConfig{
 		Global: config.GlobalConfig{MaxTaskDepth: maxTaskDepth, MaxQueueSize: maxQueueSize},
 		LLM: config.LLMConfig{
@@ -137,7 +141,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 				Interrupted: snapshotRetInterrupted,
 			},
 		},
-		Telegram: config.TelegramConfig{BotToken: telegramBotToken, WebhookURL: telegramWebhookURL, ListenAddr: telegramListenAddr},
+		Telegram: config.TelegramConfig{Bots: telegramBots, ListenAddr: telegramListenAddr},
 		Auth:     config.AuthConfig{JWTSecret: authJwtSecret, JWTIssuer: authJwtIssuer, AllowedMemberships: allowedMemberships},
 		Context: config.ContextConfig{
 			MaxTokens:           contextMaxTokens,
@@ -170,6 +174,8 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 	agentToolsJSON, _ := json.Marshal(cfg.LLM.DefaultAgentTools)
 	membershipsJSON, _ := json.Marshal(cfg.Auth.AllowedMemberships)
 
+	telegramBotsJSONBytes, _ := json.Marshal(cfg.Telegram.Bots)
+
 	// Upsert System Config
 	_, err = tx.Exec(ctx, `
 		INSERT INTO system_config (
@@ -177,7 +183,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			embedding_dims, max_tokens, timeout_seconds, system_prompt, agent_system_prompt, default_orchestrator_tools, default_agent_tools,
 			min_agents, max_agents, idle_timeout_seconds,
 			snapshot_enabled, snapshot_storage_path, snapshot_max_storage_bytes, snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
-			telegram_bot_token, telegram_webhook_url, telegram_listen_addr,
+			telegram_bots, telegram_listen_addr,
 			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
 			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
 			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity,
@@ -187,18 +193,18 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			$3, $4, $5, $6, $7, $8, $9,
 			$10, $11, $12,
 			$13, $14, $15, $16, $17, $18, $19,
-			$20, $21, $22,
-			$23, $24, $25,
-			$26, $27, $28, $29,
-			$30, $31, $32, $33, $34, $35, $36,
-			$37, NOW()
+			$20, $21,
+			$22, $23, $24,
+			$25, $26, $27, $28,
+			$29, $30, $31, $32, $33, $34, $35,
+			$36, NOW()
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			max_task_depth = EXCLUDED.max_task_depth, max_queue_size = EXCLUDED.max_queue_size,
 			embedding_dims = EXCLUDED.embedding_dims, max_tokens = EXCLUDED.max_tokens, timeout_seconds = EXCLUDED.timeout_seconds, system_prompt = EXCLUDED.system_prompt, agent_system_prompt = EXCLUDED.agent_system_prompt, default_orchestrator_tools = EXCLUDED.default_orchestrator_tools, default_agent_tools = EXCLUDED.default_agent_tools,
 			min_agents = EXCLUDED.min_agents, max_agents = EXCLUDED.max_agents, idle_timeout_seconds = EXCLUDED.idle_timeout_seconds,
 			snapshot_enabled = EXCLUDED.snapshot_enabled, snapshot_storage_path = EXCLUDED.snapshot_storage_path, snapshot_max_storage_bytes = EXCLUDED.snapshot_max_storage_bytes, snapshot_retention_completed = EXCLUDED.snapshot_retention_completed, snapshot_retention_failed = EXCLUDED.snapshot_retention_failed, snapshot_retention_exited = EXCLUDED.snapshot_retention_exited, snapshot_retention_interrupted = EXCLUDED.snapshot_retention_interrupted,
-			telegram_bot_token = EXCLUDED.telegram_bot_token, telegram_webhook_url = EXCLUDED.telegram_webhook_url, telegram_listen_addr = EXCLUDED.telegram_listen_addr,
+			telegram_bots = EXCLUDED.telegram_bots, telegram_listen_addr = EXCLUDED.telegram_listen_addr,
 			auth_jwt_secret = EXCLUDED.auth_jwt_secret, auth_jwt_issuer = EXCLUDED.auth_jwt_issuer, auth_allowed_memberships = EXCLUDED.auth_allowed_memberships,
 			context_max_tokens = EXCLUDED.context_max_tokens, context_compaction_threshold = EXCLUDED.context_compaction_threshold, context_preserve_recent_turns = EXCLUDED.context_preserve_recent_turns, context_compaction_agent_type = EXCLUDED.context_compaction_agent_type,
 			rag_enabled = EXCLUDED.rag_enabled, rag_default_top_k = EXCLUDED.rag_default_top_k, rag_auto_retrieve_enabled = EXCLUDED.rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call = EXCLUDED.rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k = EXCLUDED.rag_auto_retrieve_top_k, rag_auto_retrieve_max_results = EXCLUDED.rag_auto_retrieve_max_results, rag_min_similarity = EXCLUDED.rag_min_similarity,
@@ -208,7 +214,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		cfg.LLM.EmbeddingDims, cfg.LLM.MaxTokens, cfg.LLM.TimeoutSecs, cfg.LLM.DefaultSystemPrompt, cfg.LLM.DefaultAgentSystemPrompt, orchestratorToolsJSON, agentToolsJSON,
 		cfg.AgentPool.MinAgents, cfg.AgentPool.MaxAgents, cfg.AgentPool.IdleTimeoutSecs,
 		cfg.Snapshot.Enabled, cfg.Snapshot.StoragePath, cfg.Snapshot.MaxStorageBytes, cfg.Snapshot.Retention.Completed, cfg.Snapshot.Retention.Failed, cfg.Snapshot.Retention.Exited, cfg.Snapshot.Retention.Interrupted,
-		cfg.Telegram.BotToken, cfg.Telegram.WebhookURL, cfg.Telegram.ListenAddr,
+		telegramBotsJSONBytes, cfg.Telegram.ListenAddr,
 		cfg.Auth.JWTSecret, cfg.Auth.JWTIssuer, membershipsJSON,
 		cfg.Context.MaxTokens, cfg.Context.CompactionThreshold, cfg.Context.PreserveRecentTurns, cfg.Context.CompactionAgentType,
 		cfg.RAG.Enabled, cfg.RAG.DefaultTopK, cfg.RAG.AutoRetrieve.Enabled, cfg.RAG.AutoRetrieve.OnLLMCall, cfg.RAG.AutoRetrieve.TopK, cfg.RAG.AutoRetrieve.MaxResults, cfg.RAG.MinSimilarity,
