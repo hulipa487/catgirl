@@ -10,8 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moby/moby/client"
 	"github.com/moby/moby/api/types"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
@@ -44,13 +45,12 @@ func NewDockerService(logger zerolog.Logger, registry string) (*DockerService, e
 
 // ContainerManager manages containers per task
 type ContainerManager struct {
-	svc          *DockerService
-	containers   map[uuid.UUID]*ContainerInfo
-	mu           sync.RWMutex
+	svc        *DockerService
+	containers map[uuid.UUID]*ContainerInfo
+	mu         sync.RWMutex
 }
 
-type sync struct{}
-
+// NewContainerManager creates a new container manager
 func NewContainerManager(svc *DockerService) *ContainerManager {
 	return &ContainerManager{
 		svc:        svc,
@@ -77,8 +77,8 @@ func (m *ContainerManager) GetOrCreateContainer(ctx context.Context, taskID uuid
 
 	info := &ContainerInfo{
 		ContainerID: containerID,
-		TaskID:     taskID,
-		CreatedAt:  time.Now(),
+		TaskID:      taskID,
+		CreatedAt:   time.Now(),
 	}
 	m.containers[taskID] = info
 
@@ -121,7 +121,8 @@ func (s *DockerService) CreateContainer(ctx context.Context, taskID uuid.UUID, i
 		Env: []string{
 			fmt.Sprintf("TASK_ID=%s", taskID.String()),
 		},
-		Tty:       true,
+		Tty:        true,
+		OpenStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
 	}, &container.HostConfig{
@@ -135,7 +136,7 @@ func (s *DockerService) CreateContainer(ctx context.Context, taskID uuid.UUID, i
 	}
 
 	// Start container
-	if err := s.cli.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+	if err := s.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return "", fmt.Errorf("failed to start container: %w", err)
 	}
 
@@ -167,11 +168,20 @@ func (s *DockerService) PullImage(ctx context.Context, image string) error {
 // StopContainer stops and removes a container
 func (s *DockerService) StopContainer(ctx context.Context, containerID string) error {
 	timeout := 10 * time.Second
-	return s.cli.ContainerStop(ctx, containerID, &timeout)
+	return s.cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 }
 
 // ExecuteCode executes code in a container and returns the output
 func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, code string, language string) (string, error) {
+	// First try via HTTP API if container has it
+	output, err := s.ExecuteCodeViaAPI(ctx, containerID, code, language)
+	if err == nil {
+		return output, nil
+	}
+
+	// Fallback to direct exec
+	s.logger.Debug().Msg("HTTP API not available, using direct exec")
+
 	execResp, err := s.cli.ContainerExecCreate(ctx, containerID, types.ExecConfig{
 		AttachStdout: true,
 		AttachStderr: true,
@@ -189,17 +199,19 @@ func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, cod
 	defer attachResp.Close()
 
 	// Read output
-	var output bytes.Buffer
+	var outputBuf bytes.Buffer
 	buf := make([]byte, 1024)
 	for {
-		_, err := attachResp.Reader.Read(buf)
+		n, err := attachResp.Reader.Read(buf)
+		if n > 0 {
+			outputBuf.Write(buf[:n])
+		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			break
 		}
-		output.Write(buf)
 	}
 
 	// Inspect exec to get exit code
@@ -208,7 +220,7 @@ func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, cod
 		return "", fmt.Errorf("failed to inspect exec: %w", err)
 	}
 
-	result := output.String()
+	result := outputBuf.String()
 	if inspectResp.ExitCode != 0 {
 		return "", fmt.Errorf("execution failed with exit code %d: %s", inspectResp.ExitCode, result)
 	}
@@ -245,8 +257,8 @@ func (s *DockerService) ExecuteCodeViaAPI(ctx context.Context, containerID strin
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to execute code: %w", err)
 	}
