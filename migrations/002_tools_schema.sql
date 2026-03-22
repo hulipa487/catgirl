@@ -73,3 +73,21 @@ INSERT INTO tools (name, description, parameters) VALUES
     }'::jsonb
 )
 ON CONFLICT (name) DO NOTHING;
+
+-- Seed data: SEND_PARENT tool
+INSERT INTO tools (name, description, parameters) VALUES
+(
+    'SEND_PARENT',
+    'Send a message to your parent task/orchestrator to ask for clarification, report partial results, or inform about blockers.',
+    '{
+        "type": "object",
+        "properties": {
+            "message": {
+                "type": "string",
+                "description": "The message to send to the parent task or orchestrator"
+            }
+        },
+        "required": ["message"]
+    }'::jsonb
+)
+ON CONFLICT (name) DO NOTHING;

@@ -28,20 +28,21 @@ type SessionService struct {
 	OnReply     func(telegramUserID int64, message string)
 }
 
-type Session struct {
-	ID         uuid.UUID
-	TelegramUserID int64
-	State      *OrchestratorState
-	LTM        *LongTermMemoryManager
-	History    *ConversationHistoryManager
-	CreatedAt  time.Time
-	LastActive time.Time
+type OrchestratorState struct {
+	CurrentTask  string `json:"current_task,omitempty"`
+	Progress     int    `json:"progress,omitempty"`
+	PendingTasks int    `json:"pending_tasks,omitempty"`
 }
 
-type OrchestratorState struct {
-	CurrentTask string `json:"current_task,omitempty"`
-	Progress    int    `json:"progress,omitempty"`
-	PendingTasks int   `json:"pending_tasks,omitempty"`
+type Session struct {
+	ID             uuid.UUID
+	TelegramUserID int64
+	State          *OrchestratorState
+	LTM            *LongTermMemoryManager
+	History        *ConversationHistoryManager
+	InputQueue     chan string // Queue for async messages from telegram/subtasks
+	CreatedAt      time.Time
+	LastActive     time.Time
 }
 
 type LongTermMemoryManager struct {
@@ -92,17 +93,21 @@ func (s *SessionService) CreateSession(ctx context.Context, telegramUserID int64
 	}
 
 	sess := &Session{
-		ID:              sessionID,
-		TelegramUserID:  telegramUserID,
-		State:           &OrchestratorState{},
-		History:         NewConversationHistoryManager(sessionID, s.repo, &s.config.Context),
-		CreatedAt:       now,
-		LastActive:      now,
+		ID:             sessionID,
+		TelegramUserID: telegramUserID,
+		State:          &OrchestratorState{},
+		History:        NewConversationHistoryManager(sessionID, s.repo, &s.config.Context),
+		InputQueue:     make(chan string, 100),
+		CreatedAt:      now,
+		LastActive:     now,
 	}
 
 	s.mu.Lock()
 	s.sessions[sessionID] = sess
 	s.mu.Unlock()
+
+	// Start the background orchestrator loop for this new session
+	go s.orchestratorLoop(sess)
 
 	s.logger.Info().
 		Str("session_id", sessionID.String()).
@@ -134,17 +139,21 @@ func (s *SessionService) GetSession(ctx context.Context, sessionID uuid.UUID) (*
 	}
 
 	sess := &Session{
-		ID:              sessionModel.ID,
-		TelegramUserID:  sessionModel.TelegramUserID,
-		State:           &state,
-		History:         NewConversationHistoryManager(sessionModel.ID, s.repo, &s.config.Context),
-		CreatedAt:       sessionModel.CreatedAt,
-		LastActive:      sessionModel.UpdatedAt,
+		ID:             sessionModel.ID,
+		TelegramUserID: sessionModel.TelegramUserID,
+		State:          &state,
+		History:        NewConversationHistoryManager(sessionModel.ID, s.repo, &s.config.Context),
+		InputQueue:     make(chan string, 100), // Input queue for the session
+		CreatedAt:      sessionModel.CreatedAt,
+		LastActive:     sessionModel.UpdatedAt,
 	}
 
 	s.mu.Lock()
 	s.sessions[sessionID] = sess
 	s.mu.Unlock()
+
+	// Start the background loop for the session since we just loaded it
+	go s.orchestratorLoop(sess)
 
 	return sess, nil
 }
@@ -205,8 +214,23 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 		return err
 	}
 
-	// Real implementation of orchestrator thought-action loop picking it up and replying
-	go func() {
+	// Send message to the session's input queue
+	select {
+	case session.InputQueue <- message:
+	default:
+		s.logger.Warn().Str("session_id", sessionID.String()).Msg("Session input queue full, dropping message")
+	}
+
+	return nil
+}
+
+// orchestratorLoop is the background loop running for a session
+func (s *SessionService) orchestratorLoop(session *Session) {
+	for {
+		message := <-session.InputQueue
+
+		ctx := context.Background()
+
 		// Wait a brief moment to ensure DB transaction finishes
 		time.Sleep(100 * time.Millisecond)
 
@@ -276,7 +300,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 		msg := resp.Choices[0].Message
 
 		// Record usage
-		billingSvc := agent.NewBillingService(s.repo, sessionID, fmt.Sprintf("%d", telegramUserID))
+		billingSvc := agent.NewBillingService(s.repo, session.ID, fmt.Sprintf("%d", session.TelegramUserID))
 		_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
 
 		// Process Tool Calls (or text response)
@@ -303,7 +327,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 				case "SEND_MESSAGE":
 					if text, ok := args["message"].(string); ok {
 						if s.OnReply != nil {
-							s.OnReply(telegramUserID, text)
+							s.OnReply(session.TelegramUserID, text)
 						}
 						toolResult = fmt.Sprintf(`{"status": "sent", "message": %s}`, tc.Function.Arguments)
 						toolResultData = map[string]interface{}{"status": "sent", "message": text}
@@ -313,7 +337,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 					if description != "" {
 						taskInstance, err := s.taskService.SpawnRootTask(
 							context.Background(),
-							sessionID,
+							session.ID,
 							"orchestrator",
 							description,
 							models.AgentTypeGeneralPurpose,
@@ -321,18 +345,16 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 						)
 						if err != nil {
 							s.logger.Error().Err(err).Msg("Failed to spawn task")
-							toolResult = fmt.Sprintf(`{"error": "failed to spawn task: %s"}`, err.Error())
+							toolResult = fmt.Sprintf(`{"success": false, "error": "failed to spawn task: %s"}`, err.Error())
 						} else {
 							s.logger.Info().
 								Str("instance_id", taskInstance.InstanceID.String()).
 								Str("task_id", taskInstance.TaskID.String()).
 								Msg("Task spawned by orchestrator")
-							toolResult = fmt.Sprintf(`{"status": "spawned", "instance_id": "%s", "task_id": "%s", "description": "%s"}`,
-								taskInstance.InstanceID.String(), taskInstance.TaskID.String(), description)
+							toolResult = fmt.Sprintf(`{"success": true, "task_id": "%s"}`, taskInstance.InstanceID.String())
 							toolResultData = map[string]interface{}{
-								"status":      "spawned",
-								"instance_id": taskInstance.InstanceID.String(),
-								"task_id":     taskInstance.TaskID.String(),
+								"success":     true,
+								"task_id":     taskInstance.InstanceID.String(),
 								"description": description,
 							}
 						}
@@ -362,7 +384,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 						Tokens:    0,
 						Timestamp: time.Now(),
 					}
-					_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
+					_ = s.AddConversationTurn(context.Background(), session.ID, agentTurn)
 				}
 			}
 
@@ -370,7 +392,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(), messages, tools, 0)
 			if err != nil || len(resp.Choices) == 0 {
 				s.logger.Error().Err(err).Msg("Failed to call LLM for follow-up")
-				return
+				continue
 			}
 
 			// Record usage for follow-up call
@@ -390,7 +412,7 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 					Tokens:    0,
 					Timestamp: time.Now(),
 				}
-				_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
+				_ = s.AddConversationTurn(context.Background(), session.ID, agentTurn)
 			}
 		} else {
 			// Log the text as internal thought/reasoning, but DO NOT send it to the user
@@ -403,11 +425,9 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 				Tokens:    0,
 				Timestamp: time.Now(),
 			}
-			_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
+			_ = s.AddConversationTurn(context.Background(), session.ID, agentTurn)
 		}
-	}()
-
-	return nil
+	}
 }
 
 func (s *SessionService) GetSessionByTelegramUser(ctx context.Context, telegramUserID int64) (*Session, error) {

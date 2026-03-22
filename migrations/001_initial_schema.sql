@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS task_families (
     status VARCHAR(50) DEFAULT 'in_progress',
     max_depth_reached INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    completed_at TIMESTAMPTZ
+    completed_at TIMESTAMPTZ,
+    container_snapshot_id UUID
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_families_session ON task_families(session_id);
@@ -54,9 +55,6 @@ CREATE INDEX IF NOT EXISTS idx_task_families_status ON task_families(status);
 CREATE TABLE IF NOT EXISTS task_instances (
     instance_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     task_id UUID REFERENCES task_families(task_id) ON DELETE CASCADE,
-    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
-    owner_id VARCHAR(255) NOT NULL,
-    depth INTEGER NOT NULL DEFAULT 0,
     description TEXT NOT NULL,
     agent_type VARCHAR(50) NOT NULL,
     status VARCHAR(50) DEFAULT 'pending',
@@ -69,16 +67,12 @@ CREATE TABLE IF NOT EXISTS task_instances (
     completed_at TIMESTAMPTZ,
     result JSONB,
     error TEXT,
-    constraints JSONB,
-    container_snapshot_id UUID
+    constraints JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_instances_task ON task_instances(task_id);
-CREATE INDEX IF NOT EXISTS idx_instances_session ON task_instances(session_id);
-CREATE INDEX IF NOT EXISTS idx_instances_owner ON task_instances(owner_id);
 CREATE INDEX IF NOT EXISTS idx_instances_status ON task_instances(status);
 CREATE INDEX IF NOT EXISTS idx_instances_priority ON task_instances(priority_score DESC);
-CREATE INDEX IF NOT EXISTS idx_instances_depth ON task_instances(depth);
 CREATE INDEX IF NOT EXISTS idx_instances_agent_type ON task_instances(agent_type);
 
 -- Container snapshots table

@@ -275,7 +275,7 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		case "task_start":
 			// Initial task description
 			msg.Role = "user"
-			msg.Content = fmt.Sprintf("You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task. Use SET_STATE with BLOCKING when waiting for async results. When done, use SET_STATE with COMPLETED or FAILED.", input.Content)
+			msg.Content = fmt.Sprintf("You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task. Use SET_STATE with BLOCKING when waiting for async results. Use SEND_PARENT to communicate with your parent. When done, use SET_STATE with COMPLETED or FAILED.", input.Content)
 
 		case "tool_result":
 			// Async tool callback result
@@ -379,10 +379,46 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 						toolResult = fmt.Sprintf(`{"error": "unknown state: %s"}`, state)
 					}
 
-				case "SEND_MESSAGE":
-					if text, ok := args["message"].(string); ok {
-						rc.sessionSvc.OnReply(session.TelegramUserID, text)
-						toolResult = `{"status": "sent"}`
+				case "SEND_PARENT":
+					msgText, _ := args["message"].(string)
+					if msgText != "" && taskInstance.ParentInstanceID != nil {
+						// Need to find the agent handling the parent instance
+						// For this, we'll iterate through our blocked agents
+						rc.blockedAgentsMu.RLock()
+						var parentAgentID string
+						for agentID, info := range rc.blockedAgents {
+							if info.TaskInstance.InstanceID == *taskInstance.ParentInstanceID {
+								parentAgentID = agentID
+								break
+							}
+						}
+						rc.blockedAgentsMu.RUnlock()
+
+						if parentAgentID != "" {
+							// Formulate a tool result for the parent that looks like it came from the child
+							toolResultStr := fmt.Sprintf(`Child Task ID: %s
+Task Description: %s
+Message: %s`, taskInstance.InstanceID.String(), taskInstance.Description, msgText)
+							// The child sends this as an async input to the parent
+							err := rc.SendToolResultToAgent(parentAgentID, "", "ASYNC_CHILD_MESSAGE", toolResultStr)
+							if err == nil {
+								toolResult = `{"success": true}`
+							} else {
+								toolResult = fmt.Sprintf(`{"success": false, "error": "failed to send to parent: %s"}`, err.Error())
+							}
+						} else {
+							// If parent is not blocked/active, it might be the Orchestrator itself
+							// or an agent that has died.
+							// Assuming orchestrator for now if parent agent not found
+							rc.sessionSvc.HandleUserMessage(ctx, session.ID, session.TelegramUserID, fmt.Sprintf("Child Task ID: %s\nTask Description: %s\nMessage: %s", taskInstance.InstanceID.String(), taskInstance.Description, msgText))
+							toolResult = `{"success": true}`
+						}
+					} else if msgText != "" {
+						// Send to orchestrator if no parent
+						rc.sessionSvc.HandleUserMessage(ctx, session.ID, session.TelegramUserID, fmt.Sprintf("Root Task ID: %s\nTask Description: %s\nMessage: %s", taskInstance.InstanceID.String(), taskInstance.Description, msgText))
+						toolResult = `{"success": true}`
+					} else {
+						toolResult = `{"success": false, "error": "message is required"}`
 					}
 
 				case "SPAWN_TASK":
@@ -414,10 +450,9 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 
 						subTask, err := rc.taskService.SpawnSubTask(ctx, taskInstance, desc, models.AgentTypeGeneralPurpose, models.PriorityNormal, parentDepth)
 						if err != nil {
-							toolResult = fmt.Sprintf(`{"error": "failed to spawn task: %s"}`, err.Error())
+							toolResult = fmt.Sprintf(`{"success": false, "error": "failed to spawn task: %s"}`, err.Error())
 						} else {
-							toolResult = fmt.Sprintf(`{"status": "spawned", "instance_id": "%s", "task_id": "%s"}`,
-								subTask.InstanceID.String(), subTask.TaskID.String())
+							toolResult = fmt.Sprintf(`{"success": true, "task_id": "%s"}`, subTask.InstanceID.String())
 						}
 					}
 
