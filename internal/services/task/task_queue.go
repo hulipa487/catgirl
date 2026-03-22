@@ -113,13 +113,14 @@ func (pq *PriorityQueue) GetAll() []*models.TaskInstance {
 	return result
 }
 
-func (pq *PriorityQueue) GetBySession(sessionID uuid.UUID) []*models.TaskInstance {
+func (pq *PriorityQueue) GetBySession(ctx context.Context, repo *repository.Repository, sessionID uuid.UUID) []*models.TaskInstance {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 
 	var result []*models.TaskInstance
 	for _, task := range pq.items {
-		if task.SessionID == sessionID {
+		tf, _ := repo.GetTaskFamily(ctx, task.TaskID)
+		if tf != nil && tf.SessionID == sessionID {
 			result = append(result, task)
 		}
 	}
@@ -201,8 +202,8 @@ func (gtq *GlobalTaskQueue) GetAllTasks() []*models.TaskInstance {
 	return gtq.pq.GetAll()
 }
 
-func (gtq *GlobalTaskQueue) GetTasksBySession(sessionID uuid.UUID) []*models.TaskInstance {
-	return gtq.pq.GetBySession(sessionID)
+func (gtq *GlobalTaskQueue) GetTasksBySession(ctx context.Context, sessionID uuid.UUID) []*models.TaskInstance {
+	return gtq.pq.GetBySession(ctx, gtq.repo, sessionID)
 }
 
 func (gtq *GlobalTaskQueue) Remove(instanceID uuid.UUID) bool {
