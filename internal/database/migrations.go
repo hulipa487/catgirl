@@ -54,6 +54,12 @@ func (r *MigrationRunner) LoadMigrations(migrationsPath string) ([]*Migration, e
 
 		nameParts := strings.SplitN(version, "_", 2)
 		if len(nameParts) < 2 {
+			// If no underscore, treat the whole name as both version and name (e.g. "schema")
+			migrations = append(migrations, &Migration{
+				Version: version,
+				Name:    version,
+				SQL:     string(content),
+			})
 			continue
 		}
 
