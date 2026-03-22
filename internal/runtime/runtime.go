@@ -30,13 +30,13 @@ type RuntimeCoordinator struct {
 	repo     *repository.Repository
 
 	llmSvc      *llm.LLMService
+	toolSvc     *tools.ToolService // Replaces MCP service
 	taskQueue   *task.GlobalTaskQueue
 	taskService *task.TaskService
 	agentPool   *agent.AgentPool
 	sessionSvc  *SessionService
 	authSvc     *auth.AuthService
-	mcpSvc      *mcp.MCPService
-	skillSvc    *skill.SkillService
+	skillSvc    *skill.SkillService // TODO: Skill Service logic needs to be updated for new tool model
 	snapshotSvc *snapshot.SnapshotService
 	ragSvc      *rag.RAGService
 	telegramSvc *telegram.TelegramService
@@ -79,15 +79,16 @@ func (rc *RuntimeCoordinator) initializeServices() error {
 	agentPool := agent.NewAgentPool(rc.repo, rc.taskService, rc.config, rc.logger)
 	rc.agentPool = agentPool
 
-	sessionSvc := NewSessionService(rc.repo, rc.config, rc.logger, rc.llmSvc)
+	toolSvc := tools.NewToolService(rc.repo, rc.config, rc.logger)
+	rc.toolSvc = toolSvc
+
+	sessionSvc := NewSessionService(rc.repo, rc.config, rc.logger, rc.llmSvc, rc.toolSvc)
 	rc.sessionSvc = sessionSvc
 
 	authSvc := auth.NewAuthService(&rc.config.Auth, rc.logger)
 	rc.authSvc = authSvc
 
-	mcpSvc := mcp.NewMCPService(rc.repo, rc.config, rc.logger)
-	rc.mcpSvc = mcpSvc
-
+	// TODO: Skill Service logic needs to be updated for new tool model
 	skillSvc := skill.NewSkillService(rc.repo, rc.config, rc.logger)
 	rc.skillSvc = skillSvc
 
@@ -219,64 +220,26 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	// Fetch any internal task-owner channel history if there was any (omitted here for simplicity,
 	// but workers shouldn't get the user's full main orchestrator chat history directly).
 
-	tools := []llm.Tool{
-		{
+	// Ensure system tools exist
+	if err := rc.toolSvc.SeedDefaultTools(ctx, session.ID); err != nil {
+		logger.Warn().Err(err).Msg("Failed to seed default tools")
+	}
+
+	dbTools, err := rc.toolSvc.ListTools(ctx, session.ID)
+	if err != nil {
+		logger.Warn().Err(err).Msg("Failed to list tools from Tool service, using empty list")
+	}
+
+	var tools []llm.Tool
+	for _, dt := range dbTools {
+		tools = append(tools, llm.Tool{
 			Type: "function",
 			Function: llm.ToolFunction{
-				Name:        "SPAWN_TASK",
-				Description: "Spawn a sub-task",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"description": map[string]interface{}{"type": "string"},
-						"priority":    map[string]interface{}{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
-					},
-					"required": []string{"description", "priority"},
-				},
+				Name:        dt.Name,
+				Description: dt.Description,
+				Parameters:  dt.InputSchema,
 			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFunction{
-				Name:        "COMPLETE_TASK",
-				Description: "Mark the current task as completed",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"result_summary": map[string]interface{}{"type": "string"},
-					},
-					"required": []string{"result_summary"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFunction{
-				Name:        "FAIL_TASK",
-				Description: "Mark the current task as failed",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"reason": map[string]interface{}{"type": "string"},
-					},
-					"required": []string{"reason"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFunction{
-				Name:        "SEND_MESSAGE",
-				Description: "Send a message to the user/orchestrator",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"message": map[string]interface{}{"type": "string"},
-					},
-					"required": []string{"message"},
-				},
-			},
-		},
+		})
 	}
 
 	resp, err := rc.llmSvc.ChatWithTools(ctx, rc.config.LLM.GPModel, messages, tools, 0)
@@ -359,41 +322,9 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 				rc.repo.UpdateTaskInstance(ctx, taskInstance)
 			}
 		}
-	} else {
-		// Just a text response, let's assume it completes the task
-		taskInstance.Status = models.TaskStatusCompleted
-		taskInstance.CompletedAt = &now
-		taskInstance.Result, _ = json.Marshal(map[string]string{"text": msg.Content})
-		rc.repo.UpdateTaskInstance(ctx, taskInstance)
-
-		if msg.Content != "" {
-			rc.sessionSvc.OnReply(session.TelegramUserID, msg.Content)
-
-			replyResultMap := map[string]interface{}{"text": msg.Content}
-			replyResultBytes, _ := json.Marshal(replyResultMap)
-
-			agentTurn := &models.ConversationTurn{
-				Thought:   "",
-				Action:    "SEND_MESSAGE",
-				Result:    replyResultBytes,
-				Tokens:    0,
-				Timestamp: time.Now(),
-			}
-			_ = rc.sessionSvc.AddConversationTurn(ctx, session.ID, agentTurn)
-		}
-	}
-
-	workerAgent.Status = models.AgentStatusIdle
-
-	if rc.config.Snapshot.Enabled {
-		_, err := rc.snapshotSvc.CreateSnapshot(ctx, taskInstance, models.SnapshotReasonCompleted)
-		if err != nil {
-			logger.Warn().Err(err).Msg("failed to create snapshot")
-		}
-	}
-
 	logger.Info().Msg("task completed")
 	return nil
+}
 }
 
 func (rc *RuntimeCoordinator) snapshotCleanupWorker() {

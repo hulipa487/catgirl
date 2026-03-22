@@ -104,14 +104,99 @@ func (s *MCPService) ListTools(ctx context.Context, sessionID uuid.UUID) ([]mode
 
 	var allTools []models.ToolDefinition
 	for _, server := range servers {
-		allTools = append(allTools, parseTools(server.Tools)...)
+		if server.Status == models.MCPStatusConnected {
+			allTools = append(allTools, parseTools(server.Tools)...)
+		}
 	}
 
 	return allTools, nil
 }
 
-func (s *MCPService) DeleteMCPServer(ctx context.Context, serverID uuid.UUID) error {
-	return s.repo.DeleteMCPServer(ctx, serverID)
+func (s *MCPService) SeedDefaultTools(ctx context.Context, sessionID uuid.UUID) error {
+	// check if built-in server already exists
+	servers, err := s.repo.ListMCPServersBySession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	for _, srv := range servers {
+		if srv.Name == "system_tools" {
+			return nil
+		}
+	}
+
+	tools := []models.ToolDefinition{
+		{
+			Name:        "SPAWN_TASK",
+			Description: "Spawn a sub-task",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"description": map[string]interface{}{"type": "string"},
+					"priority":    map[string]interface{}{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
+				},
+				"required": []string{"description", "priority"},
+			},
+		},
+		{
+			Name:        "COMPLETE_TASK",
+			Description: "Mark the current task as completed",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"result_summary": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"result_summary"},
+			},
+		},
+		{
+			Name:        "FAIL_TASK",
+			Description: "Mark the current task as failed",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"reason": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"reason"},
+			},
+		},
+		{
+			Name:        "SEND_MESSAGE",
+			Description: "Send a message to the user/orchestrator",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"message": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"message"},
+			},
+		},
+		{
+			Name:        "SET_STATE",
+			Description: "Signal the runtime what state you are in. IDLE = waiting for user. WAIT = waiting for a task. CONTINUE = loop again immediately.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"state": map[string]interface{}{"type": "string", "enum": []string{"IDLE", "WAIT", "CONTINUE"}},
+				},
+				"required": []string{"state"},
+			},
+		},
+	}
+
+	toolsJSON, _ := json.Marshal(tools)
+
+	server := &models.MCPServer{
+		ID:               uuid.New(),
+		SessionID:        sessionID,
+		Name:             "system_tools",
+		ConnectionType:   "internal",
+		Status:           models.MCPStatusConnected,
+		Tools:            toolsJSON,
+		CreatedAt:        time.Now(),
+	}
+
+	return s.repo.CreateMCPServer(ctx, server)
 }
 
 func parseTools(toolsJSON json.RawMessage) []models.ToolDefinition {

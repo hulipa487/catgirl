@@ -174,119 +174,6 @@ type Skill struct {
 	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
 }
 
-type MCPConnectionType string
-
-const (
-	MCPConnectionTypeSTDIO      MCPConnectionType = "stdio"
-	MCPConnectionTypeHTTP      MCPConnectionType = "http"
-	MCPConnectionTypeWebSocket MCPConnectionType = "websocket"
-)
-
-type MCPStatus string
-
-const (
-	MCPStatusConnected    MCPStatus = "connected"
-	MCPStatusDisconnected MCPStatus = "disconnected"
-	MCPStatusError        MCPStatus = "error"
-)
-
-type MCPServer struct {
-	ID              uuid.UUID           `json:"id" db:"id"`
-	SessionID       uuid.UUID           `json:"session_id" db:"session_id"`
-	Name            string              `json:"name" db:"name"`
-	ConnectionType  MCPConnectionType   `json:"connection_type" db:"connection_type"`
-	ConnectionString string             `json:"connection_string" db:"connection_string"`
-	Command         string              `json:"command" db:"command"`
-	Status          MCPStatus           `json:"status" db:"status"`
-	Tools           json.RawMessage     `json:"tools" db:"tools"`
-	CreatedByAgentID *string           `json:"created_by_agent_id" db:"created_by_agent_id"`
-	CreatedAt      time.Time            `json:"created_at" db:"created_at"`
-}
-
-type UsageOperationType string
-
-const (
-	UsageOperationLLMCall    UsageOperationType = "llm_call"
-	UsageOperationToolCall   UsageOperationType = "tool_call"
-	UsageOperationEmbedding  UsageOperationType = "embedding"
-)
-
-type UsageRecord struct {
-	UsageID           uuid.UUID            `json:"usage_id" db:"usage_id"`
-	TaskID           *uuid.UUID           `json:"task_id" db:"task_id"`
-	SessionID        uuid.UUID            `json:"session_id" db:"session_id"`
-	UserID           string               `json:"user_id" db:"user_id"`
-	OperationType    UsageOperationType   `json:"operation_type" db:"operation_type"`
-	OperationName    string               `json:"operation_name" db:"operation_name"`
-	InputTokens      int                  `json:"input_tokens" db:"input_tokens"`
-	OutputTokens     int                  `json:"output_tokens" db:"output_tokens"`
-	TotalTokens      int                  `json:"total_tokens" db:"total_tokens"`
-	MembershipLevel  string               `json:"membership_level" db:"membership_level"`
-	CostMultiplier   float64              `json:"cost_multiplier" db:"cost_multiplier"`
-	EffectiveTokens  float64             `json:"effective_tokens" db:"effective_tokens"`
-	Timestamp        time.Time            `json:"timestamp" db:"timestamp"`
-}
-
-type MembershipLevel string
-
-const (
-	MembershipFree       MembershipLevel = "free"
-	MembershipBasic      MembershipLevel = "basic"
-	MembershipPro        MembershipLevel = "pro"
-	MembershipEnterprise MembershipLevel = "enterprise"
-)
-
-type JWTClaims struct {
-	UserID         string           `json:"sub"`
-	Email         string           `json:"email"`
-	Membership    MembershipLevel  `json:"membership"`
-	SessionID     uuid.UUID        `json:"session_id"`
-	Exp           int64            `json:"exp"`
-	Iat           int64            `json:"iat"`
-	Permissions   []string         `json:"permissions"`
-}
-
-type ConversationTurn struct {
-	TurnID    int             `json:"turn_id"`
-	Thought   string          `json:"thought"`
-	Action    string          `json:"action"`
-	Result    json.RawMessage `json:"result"`
-	Tokens    int             `json:"tokens"`
-	Timestamp time.Time       `json:"timestamp"`
-}
-
-type ConversationHistory struct {
-	SessionID        uuid.UUID          `json:"session_id"`
-	Turns            []ConversationTurn `json:"turns"`
-	CompactedSummary *string            `json:"compacted_summary,omitempty"`
-	TotalTokens      int                `json:"total_tokens"`
-	MaxTokens        int                `json:"max_tokens"`
-}
-
-type TaskOwnerChannel struct {
-	ChannelID      uuid.UUID  `json:"channel_id" db:"channel_id"`
-	TaskInstanceID uuid.UUID  `json:"task_instance_id" db:"task_instance_id"`
-	OwnerID        string     `json:"owner_id" db:"owner_id"`
-	CreatedAt      time.Time  `json:"created_at" db:"created_at"`
-	LastActivity   time.Time  `json:"last_activity" db:"last_activity"`
-}
-
-type TextMessage struct {
-	MessageID uuid.UUID `json:"message_id" db:"message_id"`
-	ChannelID uuid.UUID `json:"channel_id" db:"channel_id"`
-	FromID    string    `json:"from_id" db:"from_id"`
-	ToID      string    `json:"to_id" db:"to_id"`
-	Content   string    `json:"content" db:"content"`
-	Timestamp time.Time `json:"timestamp" db:"timestamp"`
-	Read      bool      `json:"read" db:"read"`
-}
-
-type ToolDefinition struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"input_schema"`
-}
-
 type ActionType string
 
 const (
@@ -297,17 +184,17 @@ const (
 	ActionGetMemory         ActionType = "GET_MEMORY"
 	ActionDeleteMemory      ActionType = "DELETE_MEMORY"
 	ActionSearchMemory      ActionType = "SEARCH_LONG_TERM"
-	ActionCallTool          ActionType = "CALL_TOOL"
-	ActionListTools         ActionType = "LIST_TOOLS"
-	ActionAddMCPServer      ActionType = "ADD_MCP_SERVER"
-	ActionCreateSkill       ActionType = "CREATE_SKILL"
-	ActionExecuteSkill      ActionType = "EXECUTE_SKILL"
-	ActionRunCode           ActionType = "RUN_CODE"
+	ActionCallTool          ActionType = "CALL_TOOL" // TODO: Tool Call is done via LLM function call now
+	ActionListTools         ActionType = "LIST_TOOLS" // TODO: Tool List is done via LLM function call now
+	ActionAddMCPServer      ActionType = "ADD_MCP_SERVER" // DEPRECATED: Replaced by dynamic tool loading
+	ActionCreateSkill       ActionType = "CREATE_SKILL" // TODO
+	ActionExecuteSkill      ActionType = "EXECUTE_SKILL" // TODO
+	ActionRunCode           ActionType = "RUN_CODE" // TODO
 	ActionSendMessage       ActionType = "SEND_MESSAGE"
-	ActionReadMessages      ActionType = "READ_MESSAGES"
-	ActionEmitResult        ActionType = "EMIT_RESULT"
-	ActionNotify            ActionType = "NOTIFY"
-	ActionGetContext        ActionType = "GET_CONTEXT"
+	ActionReadMessages      ActionType = "READ_MESSAGES" // DEPRECATED: User messages automatically fed
+	ActionEmitResult        ActionType = "EMIT_RESULT" // TODO
+	ActionNotify            ActionType = "NOTIFY" // TODO
+	ActionGetContext        ActionType = "GET_CONTEXT" // TODO
 )
 
 type Action struct {

@@ -12,6 +12,7 @@ import (
 	"github.com/hulipa487/catgirl/internal/repository"
 	"github.com/hulipa487/catgirl/internal/services/agent"
 	"github.com/hulipa487/catgirl/internal/services/llm"
+	"github.com/hulipa487/catgirl/internal/services/mcp"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
@@ -21,6 +22,7 @@ type SessionService struct {
 	config *config.Config
 	logger zerolog.Logger
 	llmSvc *llm.LLMService
+	mcpSvc *mcp.MCPService
 	sessions map[uuid.UUID]*Session
 	mu     sync.RWMutex
 	OnReply func(telegramUserID int64, message string)
@@ -69,12 +71,13 @@ type SkillSessionClient struct {
 	skills    map[string]*models.Skill
 }
 
-func NewSessionService(repo *repository.Repository, cfg *config.Config, logger zerolog.Logger, llmSvc *llm.LLMService) *SessionService {
+func NewSessionService(repo *repository.Repository, cfg *config.Config, logger zerolog.Logger, llmSvc *llm.LLMService, mcpSvc *mcp.MCPService) *SessionService {
 	return &SessionService{
 		repo:     repo,
 		config:   cfg,
 		logger:   logger,
 		llmSvc:   llmSvc,
+		mcpSvc:   mcpSvc,
 		sessions: make(map[uuid.UUID]*Session),
 	}
 }
@@ -271,78 +274,26 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 			messages = append(messages, llm.ChatMessage{Role: "user", Content: message})
 		}
 
-		tools := []llm.Tool{
-			{
+		// Ensure system tools exist
+		if err := s.toolSvc.SeedDefaultTools(context.Background(), sessionID); err != nil {
+			s.logger.Warn().Err(err).Msg("Failed to seed default tools")
+		}
+
+		dbTools, err := s.toolSvc.ListTools(context.Background(), sessionID)
+		if err != nil {
+			s.logger.Warn().Err(err).Msg("Failed to list tools from Tool service, using empty list")
+		}
+
+		var tools []llm.Tool
+		for _, dt := range dbTools {
+			tools = append(tools, llm.Tool{
 				Type: "function",
 				Function: llm.ToolFunction{
-					Name:        "SPAWN_TASK",
-					Description: "Spawn a sub-task",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"description": map[string]interface{}{"type": "string"},
-							"priority":    map[string]interface{}{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
-						},
-						"required": []string{"description", "priority"},
-					},
+					Name:        dt.Name,
+					Description: dt.Description,
+					Parameters:  dt.InputSchema,
 				},
-			},
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "COMPLETE_TASK",
-					Description: "Mark the current task as completed",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"result_summary": map[string]interface{}{"type": "string"},
-						},
-						"required": []string{"result_summary"},
-					},
-				},
-			},
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "FAIL_TASK",
-					Description: "Mark the current task as failed",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"reason": map[string]interface{}{"type": "string"},
-						},
-						"required": []string{"reason"},
-					},
-				},
-			},
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "SEND_MESSAGE",
-					Description: "Send a message to the user/orchestrator",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"message": map[string]interface{}{"type": "string"},
-						},
-						"required": []string{"message"},
-					},
-				},
-			},
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "SET_STATE",
-					Description: "Signal the runtime what state you are in. IDLE = waiting for user. WAIT = waiting for a task. CONTINUE = loop again immediately.",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"state": map[string]interface{}{"type": "string", "enum": []string{"IDLE", "WAIT", "CONTINUE"}},
-						},
-						"required": []string{"state"},
-					},
-				},
-			},
+			})
 		}
 
 		for loopCount := 0; loopCount < 10; loopCount++ { // Safety limit
