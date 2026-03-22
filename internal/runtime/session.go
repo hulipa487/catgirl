@@ -253,64 +253,14 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 			messages = append(messages, llm.ChatMessage{Role: "user", Content: message})
 		}
 
-		tools := []llm.Tool{
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "SPAWN_TASK",
-					Description: "Spawn a sub-task",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"description": map[string]interface{}{"type": "string"},
-							"priority":    map[string]interface{}{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
-						},
-						"required": []string{"description", "priority"},
-					},
-				},
-			},
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "COMPLETE_TASK",
-					Description: "Mark the current task as completed",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"result_summary": map[string]interface{}{"type": "string"},
-						},
-						"required": []string{"result_summary"},
-					},
-				},
-			},
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "FAIL_TASK",
-					Description: "Mark the current task as failed",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"reason": map[string]interface{}{"type": "string"},
-						},
-						"required": []string{"reason"},
-					},
-				},
-			},
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "SEND_MESSAGE",
-					Description: "Send a message to the user/orchestrator",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"message": map[string]interface{}{"type": "string"},
-						},
-						"required": []string{"message"},
-					},
-				},
-			},
+		tools, err := LoadToolsFromDB(context.Background(), s.repo)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("Failed to load tools from database")
+			return
+		}
+
+		if len(tools) == 0 {
+			s.logger.Warn().Msg("No tools loaded from database")
 		}
 
 		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.config.LLM.GPModel, messages, tools, 0)

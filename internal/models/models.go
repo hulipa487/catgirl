@@ -250,6 +250,16 @@ type ToolDefinition struct {
 	InputSchema map[string]interface{} `json:"input_schema"`
 }
 
+type Tool struct {
+	ID         uuid.UUID       `json:"id" db:"id"`
+	Name       string          `json:"name" db:"name"`
+	Description string         `json:"description" db:"description"`
+	Parameters json.RawMessage `json:"parameters" db:"parameters"`
+	IsActive   bool            `json:"is_active" db:"is_active"`
+	CreatedAt  time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at" db:"updated_at"`
+}
+
 type ActionType string
 
 const (

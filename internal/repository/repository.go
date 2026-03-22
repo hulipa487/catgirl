@@ -790,3 +790,47 @@ func (r *Repository) BanTelegramUser(ctx context.Context, telegramUserID int64, 
 	`, telegramUserID, banned)
 	return err
 }
+
+// Tool Repository
+
+func (r *Repository) ListActiveTools(ctx context.Context) ([]*models.Tool, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT id, name, description, parameters, is_active, created_at, updated_at
+		FROM tools WHERE is_active = TRUE ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tools []*models.Tool
+	for rows.Next() {
+		var t models.Tool
+		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.Parameters, &t.IsActive, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		tools = append(tools, &t)
+	}
+	return tools, nil
+}
+
+func (r *Repository) GetToolByName(ctx context.Context, name string) (*models.Tool, error) {
+	var t models.Tool
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT id, name, description, parameters, is_active, created_at, updated_at
+		FROM tools WHERE name = $1 AND is_active = TRUE
+	`, name).Scan(&t.ID, &t.Name, &t.Description, &t.Parameters, &t.IsActive, &t.CreatedAt, &t.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return &t, err
+}
+
+func (r *Repository) CreateTool(ctx context.Context, t *models.Tool) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		INSERT INTO tools (id, name, description, parameters, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (name) DO UPDATE SET description = $3, parameters = $4, updated_at = NOW()
+	`, t.ID, t.Name, t.Description, t.Parameters, t.IsActive, t.CreatedAt, t.UpdatedAt)
+	return err
+}

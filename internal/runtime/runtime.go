@@ -209,64 +209,18 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	// Fetch any internal task-owner channel history if there was any (omitted here for simplicity,
 	// but workers shouldn't get the user's full main orchestrator chat history directly).
 
-	tools := []llm.Tool{
-		{
-			Type: "function",
-			Function: llm.ToolFunction{
-				Name:        "SPAWN_TASK",
-				Description: "Spawn a sub-task",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"description": map[string]interface{}{"type": "string"},
-						"priority":    map[string]interface{}{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
-					},
-					"required": []string{"description", "priority"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFunction{
-				Name:        "COMPLETE_TASK",
-				Description: "Mark the current task as completed",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"result_summary": map[string]interface{}{"type": "string"},
-					},
-					"required": []string{"result_summary"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFunction{
-				Name:        "FAIL_TASK",
-				Description: "Mark the current task as failed",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"reason": map[string]interface{}{"type": "string"},
-					},
-					"required": []string{"reason"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFunction{
-				Name:        "SEND_MESSAGE",
-				Description: "Send a message to the user/orchestrator",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"message": map[string]interface{}{"type": "string"},
-					},
-					"required": []string{"message"},
-				},
-			},
-		},
+	tools, err := LoadToolsFromDB(ctx, rc.repo)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to load tools from database")
+		taskInstance.Status = models.TaskStatusFailed
+		errStr := "Failed to load tools"
+		taskInstance.Error = &errStr
+		rc.repo.UpdateTaskInstance(ctx, taskInstance)
+		return err
+	}
+
+	if len(tools) == 0 {
+		logger.Warn().Msg("No tools loaded from database")
 	}
 
 	resp, err := rc.llmSvc.ChatWithTools(ctx, rc.config.LLM.GPModel, messages, tools, 0)
