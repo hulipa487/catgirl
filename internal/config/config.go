@@ -61,10 +61,11 @@ type ModelProviderConfig struct {
 }
 
 type LLMConfig struct {
+	Providers          []ModelProviderConfig `mapstructure:"providers" json:"providers"`
 	EmbeddingProviders []ModelProviderConfig `mapstructure:"embedding_providers" json:"embedding_providers"`
-	EmbeddingDims     int                   `mapstructure:"embedding_dims" json:"embedding_dims"`
-	MaxTokens         int                   `mapstructure:"max_tokens" json:"max_tokens"`
-	TimeoutSecs       int                   `mapstructure:"timeout_seconds" json:"timeout_seconds"`
+	EmbeddingDims      int                   `mapstructure:"embedding_dims" json:"embedding_dims"`
+	MaxTokens          int                   `mapstructure:"max_tokens" json:"max_tokens"`
+	TimeoutSecs        int                   `mapstructure:"timeout_seconds" json:"timeout_seconds"`
 }
 
 type AgentPoolConfig struct {
@@ -91,10 +92,6 @@ type TelegramBotConfig struct {
 	BotToken   string `mapstructure:"bot_token" json:"bot_token"`
 	WebhookURL string `mapstructure:"webhook_url" json:"webhook_url"`
 
-	// LLM Providers (per bot)
-	Providers         []ModelProviderConfig `mapstructure:"providers" json:"providers"`
-	ReasonerProviders []ModelProviderConfig `mapstructure:"reasoner_providers" json:"reasoner_providers"`
-
 	// Prompts (per bot)
 	OrchestratorSystemPrompt string `mapstructure:"orchestrator_system_prompt" json:"orchestrator_system_prompt"`
 	AgentSystemPrompt       string `mapstructure:"agent_system_prompt" json:"agent_system_prompt"`
@@ -103,7 +100,7 @@ type TelegramBotConfig struct {
 	AllowedOrchestratorTools []string `mapstructure:"allowed_orchestrator_tools" json:"allowed_orchestrator_tools"`
 	AllowedAgentTools       []string `mapstructure:"allowed_agent_tools" json:"allowed_agent_tools"`
 
-	// Model selection (per bot)
+	// Model selection (per bot - pins to specific model in global providers)
 	GPModel       string `mapstructure:"gp_model" json:"gp_model"`
 	ReasonerModel string `mapstructure:"reasoner_model" json:"reasoner_model"`
 }
@@ -210,6 +207,16 @@ func (c *Config) Validate() error {
 }
 
 func (c *RuntimeConfig) Validate() error {
+	// Validate global providers (used for both GP and Reasoner models)
+	if len(c.LLM.Providers) == 0 {
+		return fmt.Errorf("at least one llm.providers entry is required")
+	}
+	for i, p := range c.LLM.Providers {
+		if len(p.Models) == 0 {
+			return fmt.Errorf("llm.providers[%d] requires at least one model", i)
+		}
+	}
+
 	// Validate global embedding providers
 	if len(c.LLM.EmbeddingProviders) == 0 {
 		return fmt.Errorf("at least one embedding_providers entry is required")
@@ -226,15 +233,6 @@ func (c *RuntimeConfig) Validate() error {
 		}
 		if b.WebhookURL == "" {
 			return fmt.Errorf("telegram.bots[%d].webhook_url is required", i)
-		}
-		// Validate per-bot LLM providers
-		if len(b.Providers) == 0 {
-			return fmt.Errorf("telegram.bots[%d].providers is required", i)
-		}
-		for j, p := range b.Providers {
-			if len(p.Models) == 0 {
-				return fmt.Errorf("telegram.bots[%d].providers[%d] requires at least one model", i, j)
-			}
 		}
 	}
 	if c.Global.MaxTaskDepth == 0 {

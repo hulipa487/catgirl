@@ -271,10 +271,59 @@
 
           <!-- LLM SETTINGS TAB -->
           <div v-if="activeTab === 'llm'">
+            <!-- LLM Providers -->
             <div class="card mb-4">
               <div class="card-header d-flex justify-content-between align-items-center">
-                <span>Global Embedding LLM Providers</span>
-                <button class="btn btn-sm btn-primary" @click="addGlobalProvider()">
+                <span>LLM Providers (Global - used for GP and Reasoner models)</span>
+                <button class="btn btn-sm btn-primary" @click="addLLMProvider('providers')">
+                  <i class="bi bi-plus"></i> Add Provider
+                </button>
+              </div>
+              <div class="card-body p-0">
+                <div class="table-responsive">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th class="ps-4">Base URL</th>
+                        <th>API Key</th>
+                        <th>Models</th>
+                        <th class="text-end pe-4">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!config.llm.providers || config.llm.providers.length === 0">
+                        <td colspan="4" class="text-center py-4 text-muted">No providers configured.</td>
+                      </tr>
+                      <tr v-for="(provider, index) in config.llm.providers" :key="'gp'+index">
+                        <td class="ps-4">
+                          <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
+                        </td>
+                        <td>
+                          <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-key"></i></span>
+                            <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
+                          </div>
+                        </td>
+                        <td>
+                          <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, gpt-4-turbo">
+                        </td>
+                        <td class="text-end pe-4">
+                          <button class="btn btn-sm btn-outline-danger" @click="config.llm.providers.splice(index, 1)" title="Remove Provider">
+                            <i class="bi bi-trash"></i>
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Embedding Providers -->
+            <div class="card mb-4">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Embedding LLM Providers (Global)</span>
+                <button class="btn btn-sm btn-primary" @click="addLLMProvider('embedding_providers')">
                   <i class="bi bi-plus"></i> Add Provider
                 </button>
               </div>
@@ -291,7 +340,7 @@
                     </thead>
                     <tbody>
                       <tr v-if="!config.llm.embedding_providers || config.llm.embedding_providers.length === 0">
-                        <td colspan="4" class="text-center py-4 text-muted">No embedding providers configured. Click "Add Provider" above.</td>
+                        <td colspan="4" class="text-center py-4 text-muted">No embedding providers configured.</td>
                       </tr>
                       <tr v-for="(provider, index) in config.llm.embedding_providers" :key="'emb'+index">
                         <td class="ps-4">
@@ -377,106 +426,8 @@
                       </div>
                     </div>
 
-                    <!-- AI Models Section -->
-                    <h5 class="border-bottom pb-2 mb-3">AI Models</h5>
-
-                    <!-- GP Providers -->
-                    <div class="card mb-3 bg-light">
-                      <div class="card-header d-flex justify-content-between align-items-center py-2">
-                        <span class="fw-semibold">General Purpose LLM Providers</span>
-                        <button class="btn btn-sm btn-outline-primary" @click="addProvider(bot, 'providers')">
-                          <i class="bi bi-plus"></i> Add Provider
-                        </button>
-                      </div>
-                      <div class="card-body p-0">
-                        <div class="table-responsive">
-                          <table class="table table-hover align-middle mb-0">
-                            <thead class="table-light">
-                              <tr>
-                                <th class="ps-4">Base URL</th>
-                                <th>API Key</th>
-                                <th>Models</th>
-                                <th class="text-end pe-4">Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr v-if="!bot.providers || bot.providers.length === 0">
-                                <td colspan="4" class="text-center py-3 text-muted">No providers configured.</td>
-                              </tr>
-                              <tr v-for="(provider, pIndex) in bot.providers" :key="'gp'+pIndex">
-                                <td class="ps-4">
-                                  <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
-                                </td>
-                                <td>
-                                  <div class="input-group input-group-sm">
-                                    <span class="input-group-text"><i class="bi bi-key"></i></span>
-                                    <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
-                                  </div>
-                                </td>
-                                <td>
-                                  <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
-                                </td>
-                                <td class="text-end pe-4">
-                                  <button class="btn btn-sm btn-outline-danger" @click="bot.providers.splice(pIndex, 1)" title="Remove Provider">
-                                    <i class="bi bi-trash"></i>
-                                  </button>
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Reasoner Providers -->
-                    <div class="card mb-3 bg-light">
-                      <div class="card-header d-flex justify-content-between align-items-center py-2">
-                        <span class="fw-semibold">Reasoner LLM Providers</span>
-                        <button class="btn btn-sm btn-outline-primary" @click="addProvider(bot, 'reasoner_providers')">
-                          <i class="bi bi-plus"></i> Add Provider
-                        </button>
-                      </div>
-                      <div class="card-body p-0">
-                        <div class="table-responsive">
-                          <table class="table table-hover align-middle mb-0">
-                            <thead class="table-light">
-                              <tr>
-                                <th class="ps-4">Base URL</th>
-                                <th>API Key</th>
-                                <th>Models</th>
-                                <th class="text-end pe-4">Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr v-if="!bot.reasoner_providers || bot.reasoner_providers.length === 0">
-                                <td colspan="4" class="text-center py-3 text-muted">No reasoner providers configured.</td>
-                              </tr>
-                              <tr v-for="(provider, pIndex) in bot.reasoner_providers" :key="'reasoner'+pIndex">
-                                <td class="ps-4">
-                                  <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
-                                </td>
-                                <td>
-                                  <div class="input-group input-group-sm">
-                                    <span class="input-group-text"><i class="bi bi-key"></i></span>
-                                    <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
-                                  </div>
-                                </td>
-                                <td>
-                                  <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4-turbo">
-                                </td>
-                                <td class="text-end pe-4">
-                                  <button class="btn btn-sm btn-outline-danger" @click="bot.reasoner_providers.splice(pIndex, 1)" title="Remove Provider">
-                                    <i class="bi bi-trash"></i>
-                                  </button>
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Model Selection -->
+                    <!-- Model Selection (pins to global providers) -->
+                    <h5 class="border-bottom pb-2 mb-3">Model Selection</h5>
                     <div class="row mb-4">
                       <div class="col-md-6">
                         <label class="form-label fw-semibold">Pin GP Model</label>
@@ -670,16 +621,15 @@ const fetchConfig = async () => {
 
     // Ensure nested arrays exist so UI doesn't crash
     if (!config.value.llm) config.value.llm = {}
+    if (!config.value.llm.providers) config.value.llm.providers = []
     if (!config.value.llm.embedding_providers) config.value.llm.embedding_providers = []
     if (!config.value.telegram) config.value.telegram = { bots: [], listen_addr: '' }
     if (!config.value.telegram.bots) config.value.telegram.bots = []
     if (!config.value.global) config.value.global = {}
     if (!config.value.agent_pool) config.value.agent_pool = {}
 
-    // Ensure each bot has all required properties
+    // Ensure each bot has all required properties (providers are global, not per-bot)
     config.value.telegram.bots.forEach((bot: any) => {
-      if (!bot.providers) bot.providers = []
-      if (!bot.reasoner_providers) bot.reasoner_providers = []
       if (!bot.allowed_orchestrator_tools) bot.allowed_orchestrator_tools = []
       if (!bot.allowed_agent_tools) bot.allowed_agent_tools = []
       if (!bot.orchestrator_system_prompt) bot.orchestrator_system_prompt = ''
@@ -732,8 +682,6 @@ const addBot = () => {
   config.value.telegram.bots.push({
     bot_token: '',
     webhook_url: '',
-    providers: [],
-    reasoner_providers: [],
     orchestrator_system_prompt: '',
     agent_system_prompt: '',
     allowed_orchestrator_tools: [],
@@ -747,25 +695,15 @@ const updateModels = (provider: any, val: string) => {
   provider.models = val.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
 }
 
-const addProvider = (bot: any, listName: string) => {
-  if (!bot[listName]) {
-    bot[listName] = []
+const addLLMProvider = (listName: string) => {
+  if (!config.value.llm[listName]) {
+    config.value.llm[listName] = []
   }
-  bot[listName].push({
+  const defaultModels = listName === 'embedding_providers' ? ['text-embedding-3-large'] : ['gpt-4o']
+  config.value.llm[listName].push({
     base_url: 'https://api.openai.com/v1',
     api_key: '',
-    models: ['gpt-4o']
-  })
-}
-
-const addGlobalProvider = () => {
-  if (!config.value.llm.embedding_providers) {
-    config.value.llm.embedding_providers = []
-  }
-  config.value.llm.embedding_providers.push({
-    base_url: 'https://api.openai.com/v1',
-    api_key: '',
-    models: ['text-embedding-3-large']
+    models: defaultModels
   })
 }
 

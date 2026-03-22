@@ -360,9 +360,9 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		// Call LLM
 		var model llm.ModelConfig
 		if taskInstance.AgentType == models.AgentTypeReasoner {
-			model = rc.llmSvc.GetRandomReasonerModel(botConfig.ReasonerModel, botConfig.ReasonerProviders)
+			model = rc.llmSvc.GetRandomGPModel(botConfig.ReasonerModel, rc.config.RuntimeSeed.LLM.Providers)
 		} else {
-			model = rc.llmSvc.GetRandomGPModel(botConfig.GPModel, botConfig.Providers)
+			model = rc.llmSvc.GetRandomGPModel(botConfig.GPModel, rc.config.RuntimeSeed.LLM.Providers)
 		}
 		resp, err := rc.llmSvc.ChatWithTools(ctx, model, llmMessages, tools, 0)
 		if err != nil || len(resp.Choices) == 0 {

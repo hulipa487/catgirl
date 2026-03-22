@@ -75,14 +75,14 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		return nil, fmt.Errorf("failed to fetch system_config: %w", err)
 	}
 
-	// Fetch Embedding Providers only (GP and Reasoner are per-bot in telegram_bots JSON)
-	rows, err := r.db.Pool.Query(ctx, `SELECT provider_type, base_url, api_key, models FROM llm_providers WHERE provider_type = 'embedding'`)
+	// Fetch all LLM providers (global - shared across all bots)
+	rows, err := r.db.Pool.Query(ctx, `SELECT provider_type, base_url, api_key, models FROM llm_providers`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch llm_providers: %w", err)
 	}
 	defer rows.Close()
 
-	var embeddingProviders []config.ModelProviderConfig
+	var gpProviders, embeddingProviders []config.ModelProviderConfig
 	for rows.Next() {
 		var pType, baseURL, apiKey string
 		var modelsJSON json.RawMessage
@@ -92,7 +92,12 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		var modelsList []string
 		_ = json.Unmarshal(modelsJSON, &modelsList)
 		provider := config.ModelProviderConfig{BaseURL: baseURL, APIKey: apiKey, Models: modelsList}
-		embeddingProviders = append(embeddingProviders, provider)
+		switch pType {
+		case "gp":
+			gpProviders = append(gpProviders, provider)
+		case "embedding":
+			embeddingProviders = append(embeddingProviders, provider)
+		}
 	}
 
 	var allowedMemberships []string
@@ -104,10 +109,11 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	return &config.RuntimeConfig{
 		Global: config.GlobalConfig{MaxTaskDepth: maxTaskDepth, MaxQueueSize: maxQueueSize},
 		LLM: config.LLMConfig{
+			Providers:          gpProviders,
 			EmbeddingProviders: embeddingProviders,
-			EmbeddingDims:     embeddingDims,
-			MaxTokens:         maxTokens,
-			TimeoutSecs:       timeoutSecs,
+			EmbeddingDims:      embeddingDims,
+			MaxTokens:          maxTokens,
+			TimeoutSecs:        timeoutSecs,
 		},
 		AgentPool: config.AgentPoolConfig{MinAgents: minAgents, MaxAgents: maxAgents, IdleTimeoutSecs: idleTimeoutSecs},
 		Snapshot: config.SnapshotConfig{
@@ -202,7 +208,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		return fmt.Errorf("failed to upsert system config: %w", err)
 	}
 
-	// Sync Embedding Providers only (GP and Reasoner are per-bot in telegram_bots JSON)
+	// Sync all LLM providers (global - shared across all bots)
 	_, err = tx.Exec(ctx, `DELETE FROM llm_providers`)
 	if err != nil {
 		return fmt.Errorf("failed to clear llm_providers: %w", err)
@@ -217,7 +223,14 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		return err
 	}
 
-	// Only sync embedding providers - GP and Reasoner are per-bot
+	// Sync GP providers (used for both GP and Reasoner models)
+	for _, p := range cfg.LLM.Providers {
+		if err := insertProvider("gp", p); err != nil {
+			return err
+		}
+	}
+
+	// Sync Embedding providers
 	for _, p := range cfg.LLM.EmbeddingProviders {
 		if err := insertProvider("embedding", p); err != nil {
 			return err

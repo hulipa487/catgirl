@@ -13,19 +13,18 @@ dbname = "catgirl"
 sslmode = "disable"
 
 [llm]
+# Global LLM settings
 embedding_dims = 1024
 max_tokens = 4096
 timeout_seconds = 120
-default_system_prompt = "You are Catgirl, a helpful autonomous agent. Keep responses concise and natural. You MUST use the SEND_MESSAGE tool to communicate with the user. Any raw text you output will be treated as internal thoughts and the user will not see it."
-default_agent_system_prompt = "You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task. Use SET_STATE with BLOCKING when waiting for async results. Use SEND_PARENT to communicate with your parent. When done, use SET_STATE with COMPLETED or FAILED."
-default_orchestrator_tools = ["SEND_MESSAGE", "SPAWN_TASK"]
-default_agent_tools = ["SET_STATE", "SEND_PARENT"]
 
+# LLM providers (global - used for both GP and Reasoner models across all bots)
 [[llm.providers]]
 base_url = "https://api.openai.com/v1"
 api_key = "your_api_key_here"
 models = ["gpt-4o", "gpt-4-turbo"]
 
+# Embedding providers (global - used for RAG memory embeddings)
 [[llm.embedding_providers]]
 base_url = "https://api.openai.com/v1"
 api_key = "your_api_key_here"
@@ -40,18 +39,31 @@ idle_timeout_seconds = 300
 enabled = true
 storage_path = "/var/catgirl/snapshots"
 max_storage_bytes = 10737418240
-[snapsho1ts.retention]
-COMPLETED = "7d"
-FAILED = "30d"
-EXITED = "7d"
-INTERRUPTED = "14d"
+[snapshots.retention]
+completed = "7d"
+failed = "30d"
+exited = "7d"
+interrupted = "14d"
 
 [telegram]
 listen_addr = "0.0.0.0:8081"
 
+# Telegram bot configuration (prompts, tools, and model selection are per-bot)
 [[telegram.bots]]
 bot_token = "your_telegram_bot_token_here"
 webhook_url = "https://your-domain.com/telegram/webhook"
+
+# Model selection (leave empty to use random model from global providers)
+gp_model = ""
+reasoner_model = ""
+
+# Prompts for this bot (leave empty for no system prompt)
+orchestrator_system_prompt = ""
+agent_system_prompt = ""
+
+# Allowed tools for this bot (leave empty to allow all from global tools table)
+allowed_orchestrator_tools = []
+allowed_agent_tools = []
 
 [server]
 host = "0.0.0.0"
