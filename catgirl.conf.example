@@ -18,15 +18,10 @@ max_tokens = 4096
 timeout_seconds = 120
 system_prompt = "You are Catgirl, a helpful autonomous agent. Keep responses concise and natural. You MUST use the SEND_MESSAGE tool to communicate with the user. Any raw text you output will be treated as internal thoughts and the user will not see it."
 
-[[llm.gp_providers]]
+[[llm.providers]]
 base_url = "https://api.openai.com/v1"
 api_key = "your_api_key_here"
 models = ["gpt-4o", "gpt-4-turbo"]
-
-[[llm.reasoner_providers]]
-base_url = "https://api.openai.com/v1"
-api_key = "your_api_key_here"
-models = ["gpt-4o"]
 
 [[llm.embedding_providers]]
 base_url = "https://api.openai.com/v1"

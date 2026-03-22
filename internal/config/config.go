@@ -54,8 +54,7 @@ type ModelProviderConfig struct {
 }
 
 type LLMConfig struct {
-	GPProviders        []ModelProviderConfig `mapstructure:"gp_providers"`
-	ReasonerProviders  []ModelProviderConfig `mapstructure:"reasoner_providers"`
+	Providers          []ModelProviderConfig `mapstructure:"providers"`
 	EmbeddingProviders []ModelProviderConfig `mapstructure:"embedding_providers"`
 	EmbeddingDims      int                   `mapstructure:"embedding_dims"`
 	MaxTokens          int                   `mapstructure:"max_tokens"`
@@ -165,20 +164,12 @@ func (c *Config) Validate() error {
 	if c.Database.DBName == "" {
 		return fmt.Errorf("database.dbname is required")
 	}
-	if len(c.LLM.GPProviders) == 0 {
-		return fmt.Errorf("at least one llm.gp_providers entry is required")
+	if len(c.LLM.Providers) == 0 {
+		return fmt.Errorf("at least one llm.providers entry is required")
 	}
-	for i, p := range c.LLM.GPProviders {
+	for i, p := range c.LLM.Providers {
 		if len(p.Models) == 0 {
-			return fmt.Errorf("llm.gp_providers[%d] requires at least one model", i)
-		}
-	}
-	if len(c.LLM.ReasonerProviders) == 0 {
-		return fmt.Errorf("at least one llm.reasoner_providers entry is required")
-	}
-	for i, p := range c.LLM.ReasonerProviders {
-		if len(p.Models) == 0 {
-			return fmt.Errorf("llm.reasoner_providers[%d] requires at least one model", i)
+			return fmt.Errorf("llm.providers[%d] requires at least one model", i)
 		}
 	}
 	if len(c.LLM.EmbeddingProviders) == 0 {

@@ -232,11 +232,11 @@ type ModelConfig struct {
 	APIKey  string
 }
 
-func (s *LLMService) GetRandomGPModel() ModelConfig {
-	if len(s.config.GPProviders) == 0 {
+func (s *LLMService) GetRandomModel() ModelConfig {
+	if len(s.config.Providers) == 0 {
 		return ModelConfig{}
 	}
-	provider := s.config.GPProviders[rand.Intn(len(s.config.GPProviders))]
+	provider := s.config.Providers[rand.Intn(len(s.config.Providers))]
 	model := provider.Models[rand.Intn(len(provider.Models))]
 	return ModelConfig{
 		Model:   model,
@@ -245,17 +245,12 @@ func (s *LLMService) GetRandomGPModel() ModelConfig {
 	}
 }
 
+func (s *LLMService) GetRandomGPModel() ModelConfig {
+	return s.GetRandomModel()
+}
+
 func (s *LLMService) GetRandomReasonerModel() ModelConfig {
-	if len(s.config.ReasonerProviders) == 0 {
-		return ModelConfig{}
-	}
-	provider := s.config.ReasonerProviders[rand.Intn(len(s.config.ReasonerProviders))]
-	model := provider.Models[rand.Intn(len(provider.Models))]
-	return ModelConfig{
-		Model:   model,
-		BaseURL: provider.BaseURL,
-		APIKey:  provider.APIKey,
-	}
+	return s.GetRandomModel()
 }
 
 func (s *LLMService) GetRandomEmbeddingModel() ModelConfig {
