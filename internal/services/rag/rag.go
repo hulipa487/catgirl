@@ -37,7 +37,7 @@ func (s *RAGService) RetrieveMemories(ctx context.Context, sessionID uuid.UUID, 
 		topK = s.config.DefaultTopK
 	}
 
-	model := s.llm.GetRandomEmbeddingModel()
+	model := s.llm.GetRandomEmbeddingModel("")
 	embedding, err := s.llm.EmbedOne(ctx, model, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed query: %w", err)

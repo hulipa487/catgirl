@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     telegram_user_id BIGINT NOT NULL,
     name VARCHAR(255),
     status VARCHAR(50) DEFAULT 'active',
+    settings JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     orchestrator_state JSONB,

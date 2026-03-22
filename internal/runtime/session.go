@@ -38,6 +38,7 @@ type Session struct {
 	ID             uuid.UUID
 	TelegramUserID int64
 	State          *OrchestratorState
+	Settings       *models.SessionSettings
 	LTM            *LongTermMemoryManager
 	History        *ConversationHistoryManager
 	InputQueue     chan string // Queue for async messages from telegram/subtasks
@@ -80,8 +81,14 @@ func (s *SessionService) CreateSession(ctx context.Context, telegramUserID int64
 		TelegramUserID: telegramUserID,
 		Name:           fmt.Sprintf("session_%s", sessionID.String()[:8]),
 		Status:         models.SessionStatusActive,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		Settings: models.SessionSettings{
+			OrchestratorSystemPrompt: s.config.LLM.DefaultSystemPrompt,
+			AgentSystemPrompt:        s.config.LLM.DefaultAgentSystemPrompt,
+			AllowedOrchestratorTools: s.config.LLM.DefaultOrchestratorTools,
+			AllowedAgentTools:        s.config.LLM.DefaultAgentTools,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	if err := s.repo.CreateSession(ctx, session); err != nil {
@@ -96,6 +103,7 @@ func (s *SessionService) CreateSession(ctx context.Context, telegramUserID int64
 		ID:             sessionID,
 		TelegramUserID: telegramUserID,
 		State:          &OrchestratorState{},
+		Settings:       &session.Settings,
 		History:        NewConversationHistoryManager(sessionID, s.repo, &s.config.Context),
 		InputQueue:     make(chan string, 100),
 		CreatedAt:      now,
@@ -142,6 +150,7 @@ func (s *SessionService) GetSession(ctx context.Context, sessionID uuid.UUID) (*
 		ID:             sessionModel.ID,
 		TelegramUserID: sessionModel.TelegramUserID,
 		State:          &state,
+		Settings:       &sessionModel.Settings,
 		History:        NewConversationHistoryManager(sessionModel.ID, s.repo, &s.config.Context),
 		InputQueue:     make(chan string, 100), // Input queue for the session
 		CreatedAt:      sessionModel.CreatedAt,
@@ -235,7 +244,10 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 		// Get recent context
 		recentTurns := session.History.GetRecentTurns(session.History.cfg.PreserveRecentTurns)
 
-		sysPrompt := s.config.LLM.SystemPrompt
+		sysPrompt := session.Settings.OrchestratorSystemPrompt
+		if sysPrompt == "" {
+			sysPrompt = s.config.LLM.DefaultSystemPrompt
+		}
 
 		messages := []llm.ChatMessage{
 			{Role: "system", Content: sysPrompt},
@@ -275,17 +287,30 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 			messages = append(messages, llm.ChatMessage{Role: "user", Content: message})
 		}
 
-		tools, err := LoadToolsFromDB(context.Background(), s.repo)
-		if err != nil {
-			s.logger.Error().Err(err).Msg("Failed to load tools from database")
-			return
+		allTools, err := LoadToolsFromDB(context.Background(), s.repo)
+		tools := []llm.Tool{}
+		if err == nil {
+			allowedTools := session.Settings.AllowedOrchestratorTools
+			if len(allowedTools) == 0 {
+				allowedTools = s.config.LLM.DefaultOrchestratorTools
+			}
+
+			// Filter based on allowed tools
+			for _, t := range allTools {
+				for _, allowed := range allowedTools {
+					if t.Function.Name == allowed {
+						tools = append(tools, t)
+						break
+					}
+				}
+			}
 		}
 
 		if len(tools) == 0 {
-			s.logger.Warn().Msg("No tools loaded from database")
+			s.logger.Warn().Msg("No tools loaded for orchestrator")
 		}
 
-		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(), messages, tools, 0)
+		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(session.Settings.GPModel), messages, tools, 0)
 
 		if err != nil || len(resp.Choices) == 0 {
 			s.logger.Error().Err(err).Msg("Failed to call LLM for reply")
@@ -384,7 +409,7 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 			}
 
 			// Follow-up LLM call with tool results
-			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(), messages, tools, 0)
+			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(session.Settings.GPModel), messages, tools, 0)
 			if err != nil || len(resp.Choices) == 0 {
 				s.logger.Error().Err(err).Msg("Failed to call LLM for follow-up")
 				continue

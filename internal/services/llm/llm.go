@@ -232,11 +232,28 @@ type ModelConfig struct {
 	APIKey  string
 }
 
-func (s *LLMService) GetRandomModel() ModelConfig {
-	if len(s.config.Providers) == 0 {
+func (s *LLMService) GetRandomModel(providers []config.ModelProviderConfig, preferredModel string) ModelConfig {
+	if len(providers) == 0 {
 		return ModelConfig{}
 	}
-	provider := s.config.Providers[rand.Intn(len(s.config.Providers))]
+
+	// If preferredModel is specified, search for it across all providers
+	if preferredModel != "" {
+		for _, provider := range providers {
+			for _, m := range provider.Models {
+				if m == preferredModel {
+					return ModelConfig{
+						Model:   m,
+						BaseURL: provider.BaseURL,
+						APIKey:  provider.APIKey,
+					}
+				}
+			}
+		}
+		// If preferred model not found, fallback to random
+	}
+
+	provider := providers[rand.Intn(len(providers))]
 	model := provider.Models[rand.Intn(len(provider.Models))]
 	return ModelConfig{
 		Model:   model,
@@ -245,23 +262,14 @@ func (s *LLMService) GetRandomModel() ModelConfig {
 	}
 }
 
-func (s *LLMService) GetRandomGPModel() ModelConfig {
-	return s.GetRandomModel()
+func (s *LLMService) GetRandomGPModel(preferred string) ModelConfig {
+	return s.GetRandomModel(s.config.Providers, preferred)
 }
 
-func (s *LLMService) GetRandomReasonerModel() ModelConfig {
-	return s.GetRandomModel()
+func (s *LLMService) GetRandomReasonerModel(preferred string) ModelConfig {
+	return s.GetRandomModel(s.config.ReasonerProviders, preferred)
 }
 
-func (s *LLMService) GetRandomEmbeddingModel() ModelConfig {
-	if len(s.config.EmbeddingProviders) == 0 {
-		return ModelConfig{}
-	}
-	provider := s.config.EmbeddingProviders[rand.Intn(len(s.config.EmbeddingProviders))]
-	model := provider.Models[rand.Intn(len(provider.Models))]
-	return ModelConfig{
-		Model:   model,
-		BaseURL: provider.BaseURL,
-		APIKey:  provider.APIKey,
-	}
+func (s *LLMService) GetRandomEmbeddingModel(preferred string) ModelConfig {
+	return s.GetRandomModel(s.config.EmbeddingProviders, preferred)
 }

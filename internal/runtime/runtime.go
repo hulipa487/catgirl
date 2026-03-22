@@ -298,7 +298,11 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		case "task_start":
 			// Initial task description
 			msg.Role = "user"
-			msg.Content = fmt.Sprintf(rc.config.RuntimeSeed.LLM.AgentSystemPrompt, input.Content)
+			agentPrompt := session.Settings.AgentSystemPrompt
+			if agentPrompt == "" {
+				agentPrompt = rc.config.RuntimeSeed.LLM.DefaultAgentSystemPrompt
+			}
+			msg.Content = fmt.Sprintf(agentPrompt, input.Content)
 
 		case "tool_result":
 			// Async tool callback result
@@ -323,14 +327,31 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		llmMessages := rc.convertToLLMMessages(workerAgent.OutputHistory)
 
 		// Load tools
-		tools, err := LoadToolsFromDB(ctx, rc.repo)
-		if err != nil || len(tools) == 0 {
-			logger.Warn().Msg("No tools available")
-			tools = []llm.Tool{}
+		allTools, err := LoadToolsFromDB(ctx, rc.repo)
+		tools := []llm.Tool{}
+		if err == nil {
+			allowedTools := session.Settings.AllowedAgentTools
+			if len(allowedTools) == 0 {
+				allowedTools = rc.config.RuntimeSeed.LLM.DefaultAgentTools
+			}
+
+			// Filter based on allowed tools
+			for _, t := range allTools {
+				for _, allowed := range allowedTools {
+					if t.Function.Name == allowed {
+						tools = append(tools, t)
+						break
+					}
+				}
+			}
+		}
+
+		if len(tools) == 0 {
+			logger.Warn().Msg("No tools available for agent")
 		}
 
 		// Call LLM
-		model := rc.llmSvc.GetRandomGPModel()
+		model := rc.llmSvc.GetRandomGPModel(session.Settings.GPModel)
 		resp, err := rc.llmSvc.ChatWithTools(ctx, model, llmMessages, tools, 0)
 		if err != nil || len(resp.Choices) == 0 {
 			logger.Error().Err(err).Msg("LLM call failed")

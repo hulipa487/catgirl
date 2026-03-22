@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS system_config (
     timeout_seconds INTEGER DEFAULT 120,
     system_prompt TEXT DEFAULT '',
     agent_system_prompt TEXT DEFAULT '',
+    default_orchestrator_tools JSONB DEFAULT '["SEND_MESSAGE", "SPAWN_TASK"]'::jsonb,
+    default_agent_tools JSONB DEFAULT '["SET_STATE", "SEND_PARENT"]'::jsonb,
 
     -- Agent Pool
     min_agents INTEGER DEFAULT 5,

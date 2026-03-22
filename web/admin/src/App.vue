@@ -88,8 +88,8 @@
                     <div class="d-flex justify-content-between align-items-start">
                       <div>
                         <h6 class="text-muted fw-semibold mb-1">Database Connection</h6>
-                        <h3 class="fw-bold mb-0" :class="health?.database?.status === 'ok' ? 'text-success' : 'text-danger'">
-                          <i class="bi bi-database me-1"></i> {{ health?.database?.status === 'ok' ? 'Healthy' : 'Error' }}
+                        <h3 class="fw-bold mb-0" :class="health?.database?.healthy ? 'text-success' : 'text-danger'">
+                          <i class="bi bi-database me-1"></i> {{ health?.database?.healthy ? 'Healthy' : 'Error' }}
                         </h3>
                       </div>
                       <div class="p-2 bg-primary bg-opacity-10 rounded">
@@ -97,7 +97,7 @@
                       </div>
                     </div>
                     <div class="mt-3 small text-muted" v-if="health">
-                      Latency: <strong>{{ health.database?.latency }}</strong>
+                      Latency: <strong>{{ health.database?.latency_ms }}ms</strong>
                     </div>
                   </div>
                 </div>
@@ -119,19 +119,30 @@
 
           <!-- LLM CONFIG TAB -->
           <div v-if="activeTab === 'llm'">
-            <div class="card">
-              <div class="card-header">Orchestrator System Prompt</div>
+            <div class="card mb-4">
+              <div class="card-header">Default Prompts & Tool Access</div>
               <div class="card-body">
-                <p class="text-muted small mb-3">This prompt is used by the main Catgirl orchestrator loop. It defines her personality and instructs her to use tools to communicate.</p>
-                <textarea class="form-control font-monospace text-muted" v-model="config.llm.system_prompt" rows="4"></textarea>
-              </div>
-            </div>
+                <div class="row">
+                  <div class="col-md-6">
+                    <label class="form-label fw-semibold">Orchestrator System Prompt</label>
+                    <p class="text-muted small mb-2">Used by the main Catgirl loop. Defines personality and directs her to use tools.</p>
+                    <textarea class="form-control font-monospace text-muted mb-3" v-model="config.llm.default_system_prompt" rows="3"></textarea>
 
-            <div class="card">
-              <div class="card-header">Worker Agent Prompt</div>
-              <div class="card-body">
-                <p class="text-muted small mb-3">This prompt defines the behavior of spawned sub-agents. It must instruct them to use the <code>SET_STATE</code> and <code>SEND_PARENT</code> tools correctly. <code>%s</code> will be replaced by the task description.</p>
-                <textarea class="form-control font-monospace text-muted" v-model="config.llm.agent_system_prompt" rows="4"></textarea>
+                    <label class="form-label fw-semibold">Orchestrator Tools (comma separated)</label>
+                    <p class="text-muted small mb-2">Which tools the main orchestrator loop is allowed to use.</p>
+                    <input type="text" class="form-control form-control-sm mb-4" :value="config.llm.default_orchestrator_tools?.join(', ')" @input="e => updateTools('default_orchestrator_tools', (e.target as HTMLInputElement).value)">
+                  </div>
+
+                  <div class="col-md-6">
+                    <label class="form-label fw-semibold">Worker Agent Prompt</label>
+                    <p class="text-muted small mb-2">Defines behavior of sub-agents. Instructs them to use SET_STATE. %s is replaced by task.</p>
+                    <textarea class="form-control font-monospace text-muted mb-3" v-model="config.llm.default_agent_system_prompt" rows="3"></textarea>
+
+                    <label class="form-label fw-semibold">Agent Tools (comma separated)</label>
+                    <p class="text-muted small mb-2">Which tools the sub-agents are allowed to use to perform work.</p>
+                    <input type="text" class="form-control form-control-sm" :value="config.llm.default_agent_tools?.join(', ')" @input="e => updateTools('default_agent_tools', (e.target as HTMLInputElement).value)">
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -168,7 +179,7 @@
                           </div>
                         </td>
                         <td>
-                          <input type="text" class="form-control form-control-sm" :value="provider.models.join(', ')" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
+                          <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
                         </td>
                         <td class="text-end pe-4">
                           <button class="btn btn-sm btn-outline-danger" @click="config.llm.providers.splice(index, 1)" title="Remove Provider">
@@ -216,7 +227,7 @@
                           </div>
                         </td>
                         <td>
-                          <input type="text" class="form-control form-control-sm" :value="provider.models.join(', ')" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
+                          <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
                         </td>
                         <td class="text-end pe-4">
                           <button class="btn btn-sm btn-outline-danger" @click="config.llm.reasoner_providers.splice(index, 1)" title="Remove Provider">
@@ -264,7 +275,7 @@
                           </div>
                         </td>
                         <td>
-                          <input type="text" class="form-control form-control-sm" :value="provider.models.join(', ')" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="text-embedding-3-large">
+                          <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="text-embedding-3-large">
                         </td>
                         <td class="text-end pe-4">
                           <button class="btn btn-sm btn-outline-danger" @click="config.llm.embedding_providers.splice(index, 1)" title="Remove Provider">
@@ -472,6 +483,10 @@ const saveConfig = async () => {
   } finally {
     saving.value = false
   }
+}
+
+const updateTools = (toolType: 'default_orchestrator_tools' | 'default_agent_tools', val: string) => {
+  config.value.llm[toolType] = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
 }
 
 const updateModels = (provider: any, val: string) => {

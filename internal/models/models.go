@@ -15,11 +15,21 @@ const (
 	SessionStatusTerminated SessionStatus = "terminated"
 )
 
+type SessionSettings struct {
+	OrchestratorSystemPrompt string   `json:"orchestrator_system_prompt"`
+	AgentSystemPrompt        string   `json:"agent_system_prompt"`
+	AllowedOrchestratorTools []string `json:"allowed_orchestrator_tools"`
+	AllowedAgentTools        []string `json:"allowed_agent_tools"`
+	GPModel                  string   `json:"gp_model,omitempty"`
+	ReasonerModel            string   `json:"reasoner_model,omitempty"`
+}
+
 type Session struct {
 	ID                uuid.UUID       `json:"id" db:"id"`
 	TelegramUserID    int64           `json:"telegram_user_id" db:"telegram_user_id"`
 	Name              string          `json:"name" db:"name"`
 	Status            SessionStatus   `json:"status" db:"status"`
+	Settings          SessionSettings `json:"settings" db:"settings"`
 	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at" db:"updated_at"`
 	OrchestratorState json.RawMessage `json:"orchestrator_state" db:"orchestrator_state"`

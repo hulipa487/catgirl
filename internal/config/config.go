@@ -67,8 +67,12 @@ type LLMConfig struct {
 	EmbeddingDims      int                   `mapstructure:"embedding_dims" json:"embedding_dims"`
 	MaxTokens          int                   `mapstructure:"max_tokens" json:"max_tokens"`
 	TimeoutSecs        int                   `mapstructure:"timeout_seconds" json:"timeout_seconds"`
-	SystemPrompt       string                `mapstructure:"system_prompt" json:"system_prompt"`
-	AgentSystemPrompt  string                `mapstructure:"agent_system_prompt" json:"agent_system_prompt"`
+
+	// Session Defaults
+	DefaultSystemPrompt       string   `mapstructure:"default_system_prompt" json:"default_system_prompt"`
+	DefaultAgentSystemPrompt  string   `mapstructure:"default_agent_system_prompt" json:"default_agent_system_prompt"`
+	DefaultOrchestratorTools  []string `mapstructure:"default_orchestrator_tools" json:"default_orchestrator_tools"`
+	DefaultAgentTools         []string `mapstructure:"default_agent_tools" json:"default_agent_tools"`
 }
 
 type AgentPoolConfig struct {

@@ -415,7 +415,7 @@ func NewLongTermMemoryService(repo *repository.Repository, sessionID uuid.UUID, 
 }
 
 func (s *LongTermMemoryService) Search(ctx context.Context, query string, topK int) ([]*models.LongTermMemory, error) {
-	model := s.llm.GetRandomEmbeddingModel()
+	model := s.llm.GetRandomEmbeddingModel("")
 	embedding, err := s.llm.EmbedOne(ctx, model, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed query: %w", err)
@@ -434,7 +434,7 @@ func (s *LongTermMemoryService) Search(ctx context.Context, query string, topK i
 }
 
 func (s *LongTermMemoryService) Store(ctx context.Context, content string, tier models.LTMTier, metadata map[string]interface{}) error {
-	model := s.llm.GetRandomEmbeddingModel()
+	model := s.llm.GetRandomEmbeddingModel("")
 	embedding, err := s.llm.EmbedOne(ctx, model, content)
 	if err != nil {
 		return fmt.Errorf("failed to embed content: %w", err)
