@@ -27,6 +27,21 @@ func NewHandlers(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zero
 // Config Handlers
 
 func (h *Handlers) GetConfig(c *gin.Context) {
+	ctx := c.Request.Context()
+	dbConfig, err := h.runtime.GetRepository().GetRuntimeConfig(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load config from db"})
+		return
+	}
+
+	if dbConfig != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"config": dbConfig,
+		})
+		return
+	}
+
+	// Fallback to in-memory seed if DB is somehow empty
 	c.JSON(http.StatusOK, gin.H{
 		"config": h.config.RuntimeSeed,
 	})
