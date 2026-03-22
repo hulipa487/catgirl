@@ -60,6 +60,7 @@ type LLMConfig struct {
 	MaxTokens          int                   `mapstructure:"max_tokens"`
 	TimeoutSecs        int                   `mapstructure:"timeout_seconds"`
 	SystemPrompt       string                `mapstructure:"system_prompt"`
+	AgentSystemPrompt  string                `mapstructure:"agent_system_prompt"`
 }
 
 type AgentPoolConfig struct {

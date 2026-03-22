@@ -236,9 +236,6 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 		recentTurns := session.History.GetRecentTurns(session.History.cfg.PreserveRecentTurns)
 
 		sysPrompt := s.config.LLM.SystemPrompt
-		if sysPrompt == "" {
-			sysPrompt = "You are an autonomous agent. You MUST use the SEND_MESSAGE tool to communicate with the user. Any raw text you output will be treated as internal thoughts and the user will not see it."
-		}
 
 		messages := []llm.ChatMessage{
 			{Role: "system", Content: sysPrompt},

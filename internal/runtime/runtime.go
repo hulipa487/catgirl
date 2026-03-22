@@ -275,7 +275,7 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		case "task_start":
 			// Initial task description
 			msg.Role = "user"
-			msg.Content = fmt.Sprintf("You are an autonomous worker agent. Your task is: %s\nUse tools to accomplish this task. Use SET_STATE with BLOCKING when waiting for async results. Use SEND_PARENT to communicate with your parent. When done, use SET_STATE with COMPLETED or FAILED.", input.Content)
+			msg.Content = fmt.Sprintf(rc.config.LLM.AgentSystemPrompt, input.Content)
 
 		case "tool_result":
 			// Async tool callback result
