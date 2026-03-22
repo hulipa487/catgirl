@@ -79,7 +79,7 @@ func NewRuntimeCoordinator(cfg *config.Config, logger zerolog.Logger) (*RuntimeC
 	rc.toolLoader = toolLoader
 
 	// Initialize Docker service
-	dockerSvc, err := docker.NewDockerService(logger, cfg.RuntimeSeed.Global.DockerRegistry)
+	dockerSvc, err := docker.NewDockerService(logger, cfg.RuntimeSeed.Global.DockerRegistry, cfg.RuntimeSeed.Global.DockerImage)
 	if err != nil {
 		logger.Warn().Err(err).Msg("failed to initialize docker service, code execution will not be available")
 	} else {

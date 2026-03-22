@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moby/moby/api/types"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/google/uuid"
@@ -18,9 +17,10 @@ import (
 )
 
 type DockerService struct {
-	logger   zerolog.Logger
-	cli      *client.Client
-	registry string
+	logger       zerolog.Logger
+	cli          *client.Client
+	registry     string
+	defaultImage string
 }
 
 type ContainerInfo struct {
@@ -30,16 +30,17 @@ type ContainerInfo struct {
 }
 
 // NewDockerService creates a new Docker service
-func NewDockerService(logger zerolog.Logger, registry string) (*DockerService, error) {
+func NewDockerService(logger zerolog.Logger, registry string, defaultImage string) (*DockerService, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
 
 	return &DockerService{
-		logger:   logger,
-		cli:      cli,
-		registry: registry,
+		logger:       logger,
+		cli:          cli,
+		registry:     registry,
+		defaultImage: defaultImage,
 	}, nil
 }
 
@@ -107,7 +108,12 @@ func (m *ContainerManager) ReleaseContainer(ctx context.Context, taskID uuid.UUI
 // CreateContainer creates a new Docker container
 func (s *DockerService) CreateContainer(ctx context.Context, taskID uuid.UUID, image string) (string, error) {
 	if image == "" {
-		image = s.registry + "/catgirl-runtime:latest"
+		// Use the configured default image
+		if s.registry != "" {
+			image = s.registry + "/" + s.defaultImage
+		} else {
+			image = s.defaultImage
+		}
 	}
 
 	// Pull image if needed
@@ -116,27 +122,30 @@ func (s *DockerService) CreateContainer(ctx context.Context, taskID uuid.UUID, i
 	}
 
 	// Create container
-	resp, err := s.cli.ContainerCreate(ctx, &container.Config{
+	resp, err := s.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Image: image,
-		Env: []string{
-			fmt.Sprintf("TASK_ID=%s", taskID.String()),
+		Config: &container.Config{
+			Env: []string{
+				fmt.Sprintf("TASK_ID=%s", taskID.String()),
+			},
+			Tty:       true,
+			OpenStdin: true,
 		},
-		Tty:        true,
-		OpenStdin:  true,
-		AttachStdout: true,
-		AttachStderr: true,
-	}, &container.HostConfig{
-		AutoRemove: true,
-		Memory:    512 * 1024 * 1024, // 512MB limit
-		CpuPeriod: 100000,
-		CpuQuota:   50000, // 50% CPU
-	}, nil, nil, "catgirl-"+taskID.String()[:8])
+		HostConfig: &container.HostConfig{
+			AutoRemove: true,
+			Resources: container.Resources{
+				Memory: 512 * 1024 * 1024, // 512MB limit
+			},
+		},
+		Name: "catgirl-" + taskID.String()[:8],
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create container: %w", err)
 	}
 
 	// Start container
-	if err := s.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	_, err = s.cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+	if err != nil {
 		return "", fmt.Errorf("failed to start container: %w", err)
 	}
 
@@ -145,16 +154,16 @@ func (s *DockerService) CreateContainer(ctx context.Context, taskID uuid.UUID, i
 
 // PullImage pulls a Docker image
 func (s *DockerService) PullImage(ctx context.Context, image string) error {
-	reader, err := s.cli.ImagePull(ctx, image, types.ImagePullOptions{})
+	resp, err := s.cli.ImagePull(ctx, image, client.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
-	defer reader.Close()
+	defer resp.Close()
 
 	// Wait for pull to complete
 	buf := make([]byte, 1024)
 	for {
-		_, err := reader.Read(buf)
+		_, err := resp.Read(buf)
 		if err == io.EOF {
 			break
 		}
@@ -167,8 +176,9 @@ func (s *DockerService) PullImage(ctx context.Context, image string) error {
 
 // StopContainer stops and removes a container
 func (s *DockerService) StopContainer(ctx context.Context, containerID string) error {
-	timeout := 10 * time.Second
-	return s.cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+	timeout := 10
+	_, err := s.cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &timeout})
+	return err
 }
 
 // ExecuteCode executes code in a container and returns the output
@@ -179,30 +189,39 @@ func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, cod
 		return output, nil
 	}
 
-	// Fallback to direct exec
-	s.logger.Debug().Msg("HTTP API not available, using direct exec")
+	// Fallback to direct exec using moby client
+	s.logger.Debug().Msg("HTTP API not available, using container exec")
 
-	execResp, err := s.cli.ContainerExecCreate(ctx, containerID, types.ExecConfig{
+	execResp, err := s.cli.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
-		Tty:          true,
+		TTY:          true,
 		Cmd:          []string{language, "-c", code},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create exec: %w", err)
 	}
 
-	attachResp, err := s.cli.ContainerExecAttach(ctx, execResp.ID, types.ExecStartCheck{})
+	// Start exec
+	_, err = s.cli.ExecStart(ctx, execResp.ID, client.ExecStartOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to start exec: %w", err)
+	}
+
+	// Attach to get output
+	attachResp, err := s.cli.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
+		TTY: true,
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to attach to exec: %w", err)
 	}
 	defer attachResp.Close()
 
-	// Read output
+	// Read output using the hijacked connection
 	var outputBuf bytes.Buffer
 	buf := make([]byte, 1024)
 	for {
-		n, err := attachResp.Reader.Read(buf)
+		n, err := attachResp.Conn.Read(buf)
 		if n > 0 {
 			outputBuf.Write(buf[:n])
 		}
@@ -215,7 +234,7 @@ func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, cod
 	}
 
 	// Inspect exec to get exit code
-	inspectResp, err := s.cli.ContainerExecInspect(ctx, execResp.ID)
+	inspectResp, err := s.cli.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect exec: %w", err)
 	}
@@ -230,13 +249,23 @@ func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, cod
 
 // ExecuteCodeViaAPI executes code using an HTTP API inside the container
 func (s *DockerService) ExecuteCodeViaAPI(ctx context.Context, containerID string, code string, language string) (string, error) {
-	// Get container IP
-	info, err := s.cli.ContainerInspect(ctx, containerID)
+	// Get container IP - try to get from default network
+	inspectResult, err := s.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect container: %w", err)
 	}
 
-	ip := info.NetworkSettings.IPAddress
+	var ip string
+	if inspectResult.Container.NetworkSettings != nil {
+		// Try to get IP from default network
+		for name, network := range inspectResult.Container.NetworkSettings.Networks {
+			_ = name // unused
+			if network.IPAddress.String() != "" {
+				ip = network.IPAddress.String()
+				break
+			}
+		}
+	}
 	if ip == "" {
 		return "", fmt.Errorf("container has no IP address")
 	}
@@ -258,20 +287,20 @@ func (s *DockerService) ExecuteCodeViaAPI(ctx context.Context, containerID strin
 	req.Header.Set("Content-Type", "application/json")
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
+	execResp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to execute code: %w", err)
 	}
-	defer resp.Body.Close()
+	defer execResp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
+	body, _ := io.ReadAll(execResp.Body)
+	if execResp.StatusCode != 200 {
 		return "", fmt.Errorf("execution failed: %s", string(body))
 	}
 
-	var result map[string]string
-	json.Unmarshal(body, &result)
-	return result["output"], nil
+	var response map[string]string
+	json.Unmarshal(body, &response)
+	return response["output"], nil
 }
 
 // Close closes the Docker client

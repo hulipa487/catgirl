@@ -5,6 +5,7 @@ max_task_depth = 3
 max_queue_size = 1000
 tools_dir = "/var/catgirl/tools"
 docker_registry = "registry.example.com"
+docker_image = "catgirl-runtime:latest"
 
 [database]
 host = "localhost"

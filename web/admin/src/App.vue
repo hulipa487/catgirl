@@ -562,6 +562,43 @@
                 </div>
               </div>
             </div>
+
+            <div class="row mt-4">
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header">Docker Configuration</div>
+                  <div class="card-body">
+                    <p class="text-muted small mb-4">Configure Docker for code execution. Containers are created per root task and shared among workers.</p>
+
+                    <div class="mb-3">
+                      <label class="form-label fw-semibold">Docker Registry URL</label>
+                      <input type="text" class="form-control" v-model="config.global.docker_registry" placeholder="registry.example.com">
+                      <div class="form-text">The Docker registry to pull images from. Leave empty for Docker Hub.</div>
+                    </div>
+                    <div>
+                      <label class="form-label fw-semibold">Docker Image</label>
+                      <input type="text" class="form-control" v-model="config.global.docker_image" placeholder="catgirl-runtime:latest">
+                      <div class="form-text">The image to use for code execution containers (e.g., catgirl-runtime:latest).</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header">Tools Directory</div>
+                  <div class="card-body">
+                    <p class="text-muted small mb-4">Directory containing tool definitions in OpenAI function calling JSON format.</p>
+
+                    <div class="mb-0">
+                      <label class="form-label fw-semibold">Tools Directory Path</label>
+                      <input type="text" class="form-control" v-model="config.global.tools_dir" placeholder="/var/catgirl/tools">
+                      <div class="form-text">Directory scanned for tool definitions. Tools are auto-loaded on changes.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
         </div>

@@ -34,10 +34,11 @@ type RuntimeConfig struct {
 }
 
 type GlobalConfig struct {
-	MaxTaskDepth  int    `mapstructure:"max_task_depth" json:"max_task_depth"`
-	MaxQueueSize  int    `mapstructure:"max_queue_size" json:"max_queue_size"`
-	ToolsDir      string `mapstructure:"tools_dir" json:"tools_dir"`
+	MaxTaskDepth   int    `mapstructure:"max_task_depth" json:"max_task_depth"`
+	MaxQueueSize   int    `mapstructure:"max_queue_size" json:"max_queue_size"`
+	ToolsDir       string `mapstructure:"tools_dir" json:"tools_dir"`
 	DockerRegistry string `mapstructure:"docker_registry" json:"docker_registry"`
+	DockerImage    string `mapstructure:"docker_image" json:"docker_image"`
 }
 
 type DatabaseConfig struct {
@@ -244,6 +245,9 @@ func (c *RuntimeConfig) Validate() error {
 	}
 	if c.Global.ToolsDir == "" {
 		c.Global.ToolsDir = "/var/catgirl/tools"
+	}
+	if c.Global.DockerImage == "" {
+		c.Global.DockerImage = "catgirl-runtime:latest"
 	}
 	if c.AgentPool.MaxAgents == 0 {
 		c.AgentPool.MaxAgents = 50
