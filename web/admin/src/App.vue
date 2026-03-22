@@ -128,9 +128,14 @@
                     <p class="text-muted small mb-2">Used by the main Catgirl loop. Defines personality and directs her to use tools.</p>
                     <textarea class="form-control font-monospace text-muted mb-3" v-model="config.llm.default_system_prompt" rows="3"></textarea>
 
-                    <label class="form-label fw-semibold">Orchestrator Tools (comma separated)</label>
+                    <label class="form-label fw-semibold">Orchestrator Tools</label>
                     <p class="text-muted small mb-2">Which tools the main orchestrator loop is allowed to use.</p>
-                    <input type="text" class="form-control form-control-sm mb-4" :value="config.llm.default_orchestrator_tools?.join(', ')" @input="e => updateTools(config.llm, 'default_orchestrator_tools', (e.target as HTMLInputElement).value)">
+                    <div class="mb-4">
+                      <div class="form-check form-switch" v-for="tool in availableTools" :key="'orch_'+tool">
+                        <input class="form-check-input" type="checkbox" role="switch" :id="'orch_tool_'+tool" :value="tool" v-model="config.llm.default_orchestrator_tools">
+                        <label class="form-check-label font-monospace small" :for="'orch_tool_'+tool">{{ tool }}</label>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="col-md-6">
@@ -138,9 +143,14 @@
                     <p class="text-muted small mb-2">Defines behavior of sub-agents. Instructs them to use SET_STATE. %s is replaced by task.</p>
                     <textarea class="form-control font-monospace text-muted mb-3" v-model="config.llm.default_agent_system_prompt" rows="3"></textarea>
 
-                    <label class="form-label fw-semibold">Agent Tools (comma separated)</label>
+                    <label class="form-label fw-semibold">Agent Tools</label>
                     <p class="text-muted small mb-2">Which tools the sub-agents are allowed to use to perform work.</p>
-                    <input type="text" class="form-control form-control-sm" :value="config.llm.default_agent_tools?.join(', ')" @input="e => updateTools(config.llm, 'default_agent_tools', (e.target as HTMLInputElement).value)">
+                    <div class="mb-2">
+                      <div class="form-check form-switch" v-for="tool in availableTools" :key="'agent_'+tool">
+                        <input class="form-check-input" type="checkbox" role="switch" :id="'agent_tool_'+tool" :value="tool" v-model="config.llm.default_agent_tools">
+                        <label class="form-check-label font-monospace small" :for="'agent_tool_'+tool">{{ tool }}</label>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -363,7 +373,12 @@
                                 <textarea class="form-control font-monospace small text-muted mb-2" v-model="bot.orchestrator_system_prompt" rows="2" placeholder="Leave blank to use default"></textarea>
 
                                 <label class="form-label fw-semibold small mb-1">Allowed Orchestrator Tools</label>
-                                <input type="text" class="form-control form-control-sm" :value="bot.allowed_orchestrator_tools?.join(', ')" @input="e => updateTools(bot, 'allowed_orchestrator_tools', (e.target as HTMLInputElement).value)" placeholder="Leave blank to use default">
+                                <div class="mb-2">
+                                  <div class="form-check form-switch" v-for="tool in availableTools" :key="'bot_orch_'+index+'_'+tool">
+                                    <input class="form-check-input" type="checkbox" role="switch" :id="'bot_orch_'+index+'_'+tool" :value="tool" v-model="bot.allowed_orchestrator_tools">
+                                    <label class="form-check-label font-monospace small" :for="'bot_orch_'+index+'_'+tool">{{ tool }}</label>
+                                  </div>
+                                </div>
                               </div>
 
                               <div class="col-md-6">
@@ -371,7 +386,12 @@
                                 <textarea class="form-control font-monospace small text-muted mb-2" v-model="bot.agent_system_prompt" rows="2" placeholder="Leave blank to use default"></textarea>
 
                                 <label class="form-label fw-semibold small mb-1">Allowed Agent Tools</label>
-                                <input type="text" class="form-control form-control-sm" :value="bot.allowed_agent_tools?.join(', ')" @input="e => updateTools(bot, 'allowed_agent_tools', (e.target as HTMLInputElement).value)" placeholder="Leave blank to use default">
+                                <div class="mb-2">
+                                  <div class="form-check form-switch" v-for="tool in availableTools" :key="'bot_agent_'+index+'_'+tool">
+                                    <input class="form-check-input" type="checkbox" role="switch" :id="'bot_agent_'+index+'_'+tool" :value="tool" v-model="bot.allowed_agent_tools">
+                                    <label class="form-check-label font-monospace small" :for="'bot_agent_'+index+'_'+tool">{{ tool }}</label>
+                                  </div>
+                                </div>
                               </div>
                             </div>
 
@@ -487,12 +507,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 const config = ref<any>(null)
 const health = ref<any>(null)
 const saving = ref(false)
 const activeTab = ref('dashboard')
+
+const availableTools = ref<string[]>([])
 
 // @ts-ignore - Bootstrap is loaded globally via CDN
 const showToast = (id: string) => {
@@ -504,6 +526,8 @@ const showToast = (id: string) => {
   }
 }
 
+let healthInterval: any;
+
 const fetchConfig = async () => {
   try {
     const res = await fetch('/api/v1/config')
@@ -514,6 +538,15 @@ const fetchConfig = async () => {
     if (!config.value.llm.providers) config.value.llm.providers = []
     if (!config.value.llm.reasoner_providers) config.value.llm.reasoner_providers = []
     if (!config.value.llm.embedding_providers) config.value.llm.embedding_providers = []
+    if (!config.value.llm.default_orchestrator_tools) config.value.llm.default_orchestrator_tools = []
+    if (!config.value.llm.default_agent_tools) config.value.llm.default_agent_tools = []
+    if (!config.value.telegram.bots) config.value.telegram.bots = []
+
+    // Ensure each bot has array references
+    config.value.telegram.bots.forEach((bot: any) => {
+      if (!bot.allowed_orchestrator_tools) bot.allowed_orchestrator_tools = []
+      if (!bot.allowed_agent_tools) bot.allowed_agent_tools = []
+    })
 
   } catch (err) {
     console.error('Failed to fetch config', err)
@@ -554,10 +587,6 @@ const saveConfig = async () => {
   }
 }
 
-const updateTools = (target: any, propKey: string, val: string) => {
-  target[propKey] = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
-}
-
 const addBot = () => {
   if (!config.value.telegram.bots) config.value.telegram.bots = []
   config.value.telegram.bots.push({
@@ -571,18 +600,8 @@ const addBot = () => {
     reasoner_model: ''
   })
 }
-  provider.models = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
-}
-
 const updateModels = (provider: any, val: string) => {
-  if (!config.value.llm[listName]) {
-    config.value.llm[listName] = []
-  }
-  config.value.llm[listName].push({
-    base_url: 'https://api.openai.com/v1',
-    api_key: '',
-    models: ['gpt-4o']
-  })
+  provider.models = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
 }
 
 const addProvider = (listName: 'providers' | 'reasoner_providers' | 'embedding_providers') => {
@@ -596,8 +615,24 @@ const addProvider = (listName: 'providers' | 'reasoner_providers' | 'embedding_p
   })
 }
 
+const fetchTools = async () => {
+  try {
+    const res = await fetch('/api/v1/tools')
+    const data = await res.json()
+    availableTools.value = data.tools || []
+  } catch (err) {
+    console.error('Failed to fetch tools', err)
+  }
+}
+
 onMounted(() => {
   fetchConfig()
   fetchHealth()
+  fetchTools()
+  healthInterval = setInterval(fetchHealth, 5000)
+})
+
+onUnmounted(() => {
+  if (healthInterval) clearInterval(healthInterval)
 })
 </script>

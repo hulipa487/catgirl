@@ -238,6 +238,25 @@ func (h *Handlers) ListAgents(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"agents": agents})
 }
 
+func (h *Handlers) ListTools(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Assuming you have a LoadToolsFromDB or similar exported method on runtime
+	// If you don't, we can just query the repo directly here:
+	rows, err := h.runtime.GetRepository().ListActiveTools(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var tools []string
+	for _, t := range rows {
+		tools = append(tools, t.Name)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"tools": tools})
+}
+
 func (h *Handlers) ListSnapshots(c *gin.Context) {
 	ctx := c.Request.Context()
 	repo := h.runtime.GetRepository()

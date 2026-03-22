@@ -46,6 +46,7 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 
 	apiRouter.GET("/api/v1/config", handlers.GetConfig)
 	apiRouter.PUT("/api/v1/config", handlers.UpdateConfig)
+	apiRouter.GET("/api/v1/tools", handlers.ListTools)
 
 	// API static files for admin panel (Vue.js frontend)
 	apiRouter.StaticFS("/admin", http.Dir("web/admin/dist"))
