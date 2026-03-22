@@ -16,16 +16,14 @@ func NewTelegramHandler(svc *telegram.TelegramService) *TelegramHandler {
 	return &TelegramHandler{svc: svc}
 }
 
-func (h *TelegramHandler) HandleWebhook(c *gin.Context) {
-	// Optional check: you can verify c.Param("token") == botToken
-
+func (h *TelegramHandler) HandleWebhookForBot(c *gin.Context, botIndex int) {
 	var update tgbotapi.Update
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.svc.HandleUpdate(&update); err != nil {
+	if err := h.svc.HandleUpdateForBot(&update, botIndex); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

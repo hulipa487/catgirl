@@ -93,19 +93,25 @@ func (s *TelegramService) SetWebhook(ctx context.Context) error {
 	return nil
 }
 
-func (s *TelegramService) HandleUpdate(update *tgbotapi.Update) error {
+func (s *TelegramService) HandleUpdateForBot(update *tgbotapi.Update, botIndex int) error {
+	if botIndex < 0 || botIndex >= len(s.bots) {
+		return fmt.Errorf("invalid bot index")
+	}
+
 	if update.Message == nil {
 		return nil
 	}
 
+	botConfig := s.config.Bots[botIndex]
+
 	if update.Message.IsCommand() {
-		return s.handleCommand(update.Message)
+		return s.handleCommand(update.Message, botConfig)
 	}
 
-	return s.handleMessage(update.Message)
+	return s.handleMessage(update.Message, botConfig)
 }
 
-func (s *TelegramService) handleCommand(msg *tgbotapi.Message) error {
+func (s *TelegramService) handleCommand(msg *tgbotapi.Message, botConfig config.TelegramBotConfig) error {
 	command := msg.Command()
 
 	switch command {
@@ -120,7 +126,7 @@ func (s *TelegramService) handleCommand(msg *tgbotapi.Message) error {
 	}
 }
 
-func (s *TelegramService) handleMessage(msg *tgbotapi.Message) error {
+func (s *TelegramService) handleMessage(msg *tgbotapi.Message, botConfig config.TelegramBotConfig) error {
 	ctx := context.Background()
 
 	isBanned, err := s.repo.IsTelegramUserBanned(ctx, msg.From.ID)
@@ -138,7 +144,7 @@ func (s *TelegramService) handleMessage(msg *tgbotapi.Message) error {
 	}
 
 	if sessionID == nil {
-		sessionID, err = s.sessionSvc.CreateSessionForTelegramUser(ctx, msg.From.ID,
+		sessionID, err = s.sessionSvc.CreateSessionForTelegramUser(ctx, msg.From.ID, botConfig.BotToken,
 			ptrToString(msg.From.UserName),
 			ptrToString(msg.From.FirstName),
 			ptrToString(msg.From.LastName))
@@ -187,33 +193,53 @@ func (s *TelegramService) handleStatusCommand(msg *tgbotapi.Message) error {
 	return s.sendReply(msg, "Bot is running and ready to help!")
 }
 
+func (s *TelegramService) getBotForChat(ctx context.Context, chatID int64) *tgbotapi.BotAPI {
+	if len(s.bots) == 0 {
+		return nil
+	}
+
+	session, err := s.repo.GetSessionByTelegramUser(ctx, chatID)
+	if err == nil && session != nil {
+		for i, cfg := range s.config.Bots {
+			if cfg.BotToken == session.BotToken && i < len(s.bots) {
+				return s.bots[i]
+			}
+		}
+	}
+
+	// Fallback to first bot
+	return s.bots[0]
+}
+
 func (s *TelegramService) sendReply(msg *tgbotapi.Message, text string) error {
-	if s.bot == nil {
-		s.logger.Warn().Int64("chat_id", msg.Chat.ID).Msg("cannot send reply: bot not configured")
+	bot := s.getBotForChat(context.Background(), msg.Chat.ID)
+	if bot == nil {
+		s.logger.Warn().Int64("chat_id", msg.Chat.ID).Msg("cannot send reply: no bot configured")
 		return nil
 	}
 	reply := tgbotapi.NewMessage(msg.Chat.ID, text)
 	reply.ReplyToMessageID = msg.MessageID
 
-	_, err := s.bot.Send(reply)
+	_, err := bot.Send(reply)
 	return err
 }
 
 func (s *TelegramService) SendMessage(chatID int64, text string) error {
-	if s.bot == nil {
-		s.logger.Warn().Int64("chat_id", chatID).Msg("cannot send message: bot not configured")
+	bot := s.getBotForChat(context.Background(), chatID)
+	if bot == nil {
+		s.logger.Warn().Int64("chat_id", chatID).Msg("cannot send message: no bot configured")
 		return nil
 	}
 	msg := tgbotapi.NewMessage(chatID, text)
-	_, err := s.bot.Send(msg)
+	_, err := bot.Send(msg)
 	return err
 }
 
 func (s *TelegramService) GetBotInfo() (tgbotapi.User, error) {
-	if s.bot == nil {
-		return tgbotapi.User{}, fmt.Errorf("bot not configured")
+	if len(s.bots) == 0 {
+		return tgbotapi.User{}, fmt.Errorf("no bots configured")
 	}
-	return s.bot.Self, nil
+	return s.bots[0].Self, nil
 }
 
 func ptrToString(s string) string {

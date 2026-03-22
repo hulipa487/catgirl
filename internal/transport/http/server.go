@@ -62,11 +62,17 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 
 	telegramHandler := NewTelegramHandler(rt.GetTelegramService())
 
-	webhookPath := "/telegram/webhook"
-	if u, err := url.Parse(cfg.RuntimeSeed.Telegram.WebhookURL); err == nil && u.Path != "" {
-		webhookPath = u.Path
+	for i, b := range cfg.RuntimeSeed.Telegram.Bots {
+		webhookPath := fmt.Sprintf("/telegram/webhook/%d", i)
+		if u, err := url.Parse(b.WebhookURL); err == nil && u.Path != "" {
+			webhookPath = u.Path
+		}
+		// Map the path to the handler, passing the bot index
+		botIndex := i
+		telegramRouter.POST(webhookPath, func(c *gin.Context) {
+			telegramHandler.HandleWebhookForBot(c, botIndex)
+		})
 	}
-	telegramRouter.POST(webhookPath, telegramHandler.HandleWebhook)
 
 	return &Server{
 		apiServer: &http.Server{
