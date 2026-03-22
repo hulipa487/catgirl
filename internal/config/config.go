@@ -202,9 +202,7 @@ func (c *RuntimeConfig) Validate() error {
 			return fmt.Errorf("llm.providers[%d] requires at least one model", i)
 		}
 	}
-	if len(c.LLM.ReasonerProviders) == 0 {
-		return fmt.Errorf("at least one llm.reasoner_providers entry is required")
-	}
+	// Note: reasoner_providers is optional, but if specified, must have at least one model
 	for i, p := range c.LLM.ReasonerProviders {
 		if len(p.Models) == 0 {
 			return fmt.Errorf("llm.reasoner_providers[%d] requires at least one model", i)
