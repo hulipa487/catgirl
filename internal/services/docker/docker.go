@@ -130,6 +130,7 @@ func (s *DockerService) CreateContainer(ctx context.Context, taskID uuid.UUID, i
 			},
 			Tty:       true,
 			OpenStdin: true,
+			Cmd:       []string{"tail", "-f", "/dev/null"}, // Keep container running
 		},
 		HostConfig: &container.HostConfig{
 			AutoRemove: true,
