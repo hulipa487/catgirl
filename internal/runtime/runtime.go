@@ -14,7 +14,6 @@ import (
 	"github.com/hulipa487/catgirl/internal/services/agent"
 	"github.com/hulipa487/catgirl/internal/services/auth"
 	"github.com/hulipa487/catgirl/internal/services/llm"
-	"github.com/hulipa487/catgirl/internal/services/mcp"
 	"github.com/hulipa487/catgirl/internal/services/rag"
 	"github.com/hulipa487/catgirl/internal/services/snapshot"
 	"github.com/hulipa487/catgirl/internal/services/task"
