@@ -23,6 +23,7 @@ type SessionService struct {
 	logger      zerolog.Logger
 	llmSvc      *llm.LLMService
 	taskService *task.TaskService
+	toolLoader  *ToolLoader
 	sessions    map[uuid.UUID]*Session
 	mu          sync.RWMutex
 	OnReply     func(telegramUserID int64, message string)
@@ -61,13 +62,14 @@ type ConversationHistoryManager struct {
 	cfg          *config.ContextConfig
 }
 
-func NewSessionService(repo *repository.Repository, cfg *config.RuntimeConfig, logger zerolog.Logger, llmSvc *llm.LLMService, taskSvc *task.TaskService) *SessionService {
+func NewSessionService(repo *repository.Repository, cfg *config.RuntimeConfig, logger zerolog.Logger, llmSvc *llm.LLMService, taskSvc *task.TaskService, toolLoader *ToolLoader) *SessionService {
 	return &SessionService{
 		repo:        repo,
 		config:      cfg,
 		logger:      logger,
 		llmSvc:      llmSvc,
 		taskService: taskSvc,
+		toolLoader:  toolLoader,
 		sessions:    make(map[uuid.UUID]*Session),
 	}
 }
@@ -294,21 +296,8 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 			messages = append(messages, llm.ChatMessage{Role: "user", Content: message})
 		}
 
-		allTools, err := LoadToolsFromDB(context.Background(), s.repo)
-		tools := []llm.Tool{}
-		if err == nil {
-			allowedTools := botConfig.AllowedOrchestratorTools
-
-			// Filter based on allowed tools
-			for _, t := range allTools {
-				for _, allowed := range allowedTools {
-					if t.Function.Name == allowed {
-						tools = append(tools, t)
-						break
-					}
-				}
-			}
-		}
+		// Load tools from file-based tool loader
+		tools := s.toolLoader.GetToolsByName(botConfig.AllowedOrchestratorTools)
 
 		if len(tools) == 0 {
 			s.logger.Warn().Msg("No tools loaded for orchestrator")

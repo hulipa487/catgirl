@@ -47,6 +47,11 @@
             </a>
           </li>
         </ul>
+        <div class="mt-auto px-3 pt-4">
+          <button @click="logout" class="btn btn-outline-danger btn-sm w-100">
+            <i class="bi bi-box-arrow-right me-2"></i> Logout
+          </button>
+        </div>
       </div>
 
       <!-- Main Content -->
@@ -612,6 +617,22 @@ const showToast = (id: string) => {
 let healthInterval: any;
 
 const redirectToLogin = () => {
+  const currentUrl = window.location.origin + window.location.pathname
+  window.location.href = `https://auth.mtf.edu.ci/auth/login?origin=${encodeURIComponent(currentUrl)}`
+}
+
+const logout = async () => {
+  try {
+    await fetch('https://auth.mtf.edu.ci/api/v1/auth/logout', {
+      method: 'POST',
+      credentials: 'include'
+    })
+  } catch (err) {
+    console.error('Logout failed:', err)
+  }
+  // Clear local storage
+  localStorage.removeItem('mtf_auth_token')
+  // Redirect to mtfpass login
   const currentUrl = window.location.origin + window.location.pathname
   window.location.href = `https://auth.mtf.edu.ci/auth/login?origin=${encodeURIComponent(currentUrl)}`
 }

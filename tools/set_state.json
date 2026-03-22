@@ -1,0 +1,22 @@
+{
+  "type": "function",
+  "function": {
+    "name": "SET_STATE",
+    "description": "Set the agent state. Use BLOCKING when waiting for async tool results, COMPLETED when task is done, or FAILED when task cannot be completed.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["BLOCKING", "COMPLETED", "FAILED"],
+          "description": "The state to set: BLOCKING (waiting for async result), COMPLETED (task finished successfully), or FAILED (task cannot be completed)"
+        },
+        "result": {
+          "type": "string",
+          "description": "Optional result or error message to associate with the state"
+        }
+      },
+      "required": ["state"]
+    }
+  }
+}

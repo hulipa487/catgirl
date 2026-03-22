@@ -1,0 +1,17 @@
+{
+  "type": "function",
+  "function": {
+    "name": "SPAWN_TASK",
+    "description": "Spawn a new subtask to be executed by a separate agent. Use this to break down complex tasks into smaller parallel subtasks.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "A detailed description of the subtask to be executed"
+        }
+      },
+      "required": ["description"]
+    }
+  }
+}

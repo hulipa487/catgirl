@@ -13,6 +13,7 @@ import (
 	"github.com/hulipa487/catgirl/internal/repository"
 	"github.com/hulipa487/catgirl/internal/services/agent"
 	"github.com/hulipa487/catgirl/internal/services/auth"
+	"github.com/hulipa487/catgirl/internal/services/docker"
 	"github.com/hulipa487/catgirl/internal/services/llm"
 	"github.com/hulipa487/catgirl/internal/services/rag"
 	"github.com/hulipa487/catgirl/internal/services/snapshot"
@@ -36,6 +37,9 @@ type RuntimeCoordinator struct {
 	snapshotSvc *snapshot.SnapshotService
 	ragSvc      *rag.RAGService
 	telegramSvc *telegram.TelegramService
+	toolLoader  *ToolLoader
+	dockerSvc   *docker.DockerService
+	containerMgr *docker.ContainerManager
 
 	workerWg   sync.WaitGroup
 	stopCh     chan struct{}
@@ -50,6 +54,7 @@ type blockedAgentInfo struct {
 	Session          *Session
 	ConversationHistory []llm.ChatMessage
 	Tools           []llm.Tool
+	ContainerID    string // Docker container ID for this task
 }
 
 func NewRuntimeCoordinator(cfg *config.Config, logger zerolog.Logger) (*RuntimeCoordinator, error) {
@@ -67,6 +72,19 @@ func NewRuntimeCoordinator(cfg *config.Config, logger zerolog.Logger) (*RuntimeC
 		repo:    repo,
 		stopCh:  make(chan struct{}),
 		blockedAgents: make(map[string]*blockedAgentInfo),
+	}
+
+	// Initialize tool loader
+	toolLoader := NewToolLoader(cfg.RuntimeSeed.Global.ToolsDir, logger)
+	rc.toolLoader = toolLoader
+
+	// Initialize Docker service
+	dockerSvc, err := docker.NewDockerService(logger, cfg.RuntimeSeed.Global.DockerRegistry)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to initialize docker service, code execution will not be available")
+	} else {
+		rc.dockerSvc = dockerSvc
+		rc.containerMgr = docker.NewContainerManager(dockerSvc)
 	}
 
 	// Load or seed config
@@ -110,7 +128,7 @@ func (rc *RuntimeCoordinator) initializeServices() error {
 	agentPool := agent.NewAgentPool(rc.repo, rc.taskService, &rc.config.RuntimeSeed, rc.logger)
 	rc.agentPool = agentPool
 
-	sessionSvc := NewSessionService(rc.repo, &rc.config.RuntimeSeed, rc.logger, rc.llmSvc, rc.taskService)
+	sessionSvc := NewSessionService(rc.repo, &rc.config.RuntimeSeed, rc.logger, rc.llmSvc, rc.taskService, rc.toolLoader)
 	rc.sessionSvc = sessionSvc
 
 	authSvc := auth.NewAuthService(&rc.config.RuntimeSeed.Auth, rc.logger)
@@ -144,6 +162,11 @@ func (rc *RuntimeCoordinator) Start(ctx context.Context) error {
 
 	if err := rc.startWorkerLoop(); err != nil {
 		return fmt.Errorf("failed to start worker loop: %w", err)
+	}
+
+	// Start tool loader
+	if err := rc.toolLoader.Start(ctx); err != nil {
+		rc.logger.Warn().Err(err).Msg("failed to start tool loader (continuing anyway)")
 	}
 
 	if err := rc.telegramSvc.SetWebhook(ctx); err != nil {
@@ -268,15 +291,24 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	workerAgent.State = agent.AgentStateFree
 	workerAgent.OutputHistory = make([]agent.AgentMessage, 0)
 
-	// Load tools from database
-	tools, err := LoadToolsFromDB(ctx, rc.repo)
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to load tools from database")
-		return err
+	// Load tools from file-based tool loader
+	tools := rc.toolLoader.GetToolsByName(botConfig.AllowedAgentTools)
+
+	// For root tasks (no parent), create or reuse a Docker container
+	var containerID string
+	if taskInstance.ParentInstanceID == nil && rc.containerMgr != nil {
+		// This is a root task - create a container for it
+		containerInfo, err := rc.containerMgr.GetOrCreateContainer(ctx, taskInstance.InstanceID, "")
+		if err != nil {
+			logger.Warn().Err(err).Msg("failed to create container for root task, code execution may not work")
+		} else {
+			containerID = containerInfo.ContainerID
+			logger.Info().Str("container_id", containerID).Msg("container assigned to root task")
+		}
 	}
 
 	// Register this agent as available for async callbacks
-	rc.registerAgentForCallback(workerAgent.ID, taskInstance, session, tools)
+	rc.registerAgentForCallback(workerAgent.ID, taskInstance, session, tools, containerID)
 
 	// Send initial task input to the agent
 	initialInput := &agent.AgentInput{
@@ -336,22 +368,8 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		// Convert output history to LLM messages
 		llmMessages := rc.convertToLLMMessages(workerAgent.OutputHistory)
 
-		// Load tools
-		allTools, err := LoadToolsFromDB(ctx, rc.repo)
-		tools := []llm.Tool{}
-		if err == nil {
-			allowedTools := botConfig.AllowedAgentTools
-
-			// Filter based on allowed tools
-			for _, t := range allTools {
-				for _, allowed := range allowedTools {
-					if t.Function.Name == allowed {
-						tools = append(tools, t)
-						break
-					}
-				}
-			}
-		}
+		// Load tools from file-based tool loader
+		tools := rc.toolLoader.GetToolsByName(botConfig.AllowedAgentTools)
 
 		if len(tools) == 0 {
 			logger.Warn().Msg("No tools available for agent")
@@ -512,6 +530,30 @@ Message: %s`, taskInstance.InstanceID.String(), taskInstance.Description, msgTex
 						}
 					}
 
+				case "EXECUTE_CODE":
+					code, _ := args["code"].(string)
+					language, _ := args["language"].(string)
+					if code == "" {
+						toolResult = `{"success": false, "error": "code is required"}`
+					} else if rc.dockerSvc == nil {
+						toolResult = `{"success": false, "error": "docker service not available"}`
+					} else {
+						// Get container ID from blocked agent info
+						rc.blockedAgentsMu.RLock()
+						info, exists := rc.blockedAgents[workerAgent.ID]
+						rc.blockedAgentsMu.RUnlock()
+						if !exists || info.ContainerID == "" {
+							toolResult = `{"success": false, "error": "no container available for this task"}`
+						} else {
+							output, err := rc.dockerSvc.ExecuteCode(ctx, info.ContainerID, code, language)
+							if err != nil {
+								toolResult = fmt.Sprintf(`{"success": false, "error": %s}`, JSONescape(err.Error()))
+							} else {
+								toolResult = fmt.Sprintf(`{"success": true, "output": %s}`, JSONescape(output))
+							}
+						}
+					}
+
 				default:
 					toolResult = `{"error": "unknown tool"}`
 				}
@@ -655,7 +697,7 @@ func (rc *RuntimeCoordinator) logHealthStatus() {
 }
 
 // registerAgentForCallback registers an agent as available for async callbacks
-func (rc *RuntimeCoordinator) registerAgentForCallback(agentID string, taskInstance *models.TaskInstance, session *Session, tools []llm.Tool) {
+func (rc *RuntimeCoordinator) registerAgentForCallback(agentID string, taskInstance *models.TaskInstance, session *Session, tools []llm.Tool, containerID string) {
 	rc.blockedAgentsMu.Lock()
 	defer rc.blockedAgentsMu.Unlock()
 
@@ -663,15 +705,26 @@ func (rc *RuntimeCoordinator) registerAgentForCallback(agentID string, taskInsta
 		TaskInstance: taskInstance,
 		Session:     session,
 		Tools:       tools,
+		ContainerID: containerID,
 	}
 
-	rc.logger.Debug().Str("agent_id", agentID).Str("instance_id", taskInstance.InstanceID.String()).Msg("Agent registered for callback")
+	rc.logger.Debug().Str("agent_id", agentID).Str("instance_id", taskInstance.InstanceID.String()).Str("container_id", containerID).Msg("Agent registered for callback")
 }
 
-// unregisterAgentForCallback removes an agent from the callback registry
+// unregisterAgentForCallback removes an agent from the callback registry and releases its container
 func (rc *RuntimeCoordinator) unregisterAgentForCallback(agentID string) {
 	rc.blockedAgentsMu.Lock()
 	defer rc.blockedAgentsMu.Unlock()
+
+	info, exists := rc.blockedAgents[agentID]
+	if exists && info.ContainerID != "" && rc.containerMgr != nil {
+		// Release the container for this task
+		go func() {
+			if err := rc.containerMgr.ReleaseContainer(context.Background(), info.TaskInstance.InstanceID); err != nil {
+				rc.logger.Warn().Err(err).Str("instance_id", info.TaskInstance.InstanceID.String()).Msg("failed to release container")
+			}
+		}()
+	}
 
 	delete(rc.blockedAgents, agentID)
 
@@ -709,12 +762,23 @@ func (rc *RuntimeCoordinator) SendToolResultToAgent(agentID string, toolID strin
 	return nil
 }
 
+// JSONescape escapes a string for safe JSON embedding
+func JSONescape(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 func (rc *RuntimeCoordinator) Stop() error {
 	rc.logger.Info().Msg("stopping runtime coordinator")
 
 	close(rc.stopCh)
 
+	rc.toolLoader.Stop()
 	rc.agentPool.Stop()
+
+	if rc.dockerSvc != nil {
+		rc.dockerSvc.Close()
+	}
 
 	rc.workerWg.Wait()
 
@@ -750,4 +814,8 @@ func (rc *RuntimeCoordinator) GetRepository() *repository.Repository {
 
 func (rc *RuntimeCoordinator) GetTelegramService() *telegram.TelegramService {
 	return rc.telegramSvc
+}
+
+func (rc *RuntimeCoordinator) GetToolLoader() *ToolLoader {
+	return rc.toolLoader
 }

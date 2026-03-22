@@ -1,0 +1,22 @@
+{
+  "type": "function",
+  "function": {
+    "name": "EXECUTE_CODE",
+    "description": "Execute code in an isolated Docker container. Returns the stdout/stderr output. Use this to run code snippets, scripts, or perform computations.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "The code to execute"
+        },
+        "language": {
+          "type": "string",
+          "description": "Programming language (python, node, bash, etc.)",
+          "enum": ["python", "node", "bash", "sh", "ruby", "perl"]
+        }
+      },
+      "required": ["code", "language"]
+    }
+  }
+}
