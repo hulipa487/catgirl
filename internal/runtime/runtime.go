@@ -91,21 +91,35 @@ func (rc *RuntimeCoordinator) loadOrSeedRuntimeConfig(ctx context.Context) error
 		return err
 	}
 
+	// Always sync what we loaded from the file into the DB to keep them in sync
+	// `rc.config.RuntimeSeed` contains the values parsed from catgirl.conf via mapstructure
 	if rawConfig != nil && len(rawConfig) > 2 { // Not empty object {}
-		if err := json.Unmarshal(rawConfig, &rc.config.RuntimeSeed); err != nil {
+		rc.logger.Info().Msg("merging config file settings with database configuration")
+
+		var dbConfig config.RuntimeConfig
+		if err := json.Unmarshal(rawConfig, &dbConfig); err != nil {
 			return fmt.Errorf("failed to parse config from DB: %w", err)
 		}
-		rc.logger.Info().Msg("loaded runtime configuration from database")
+
+		// Priority: DB wins over local config file if a key is present? Or should file win?
+		// We'll let the file act as an overriding seed if we want it to,
+		// but since the admin panel updates the DB, we want to load the DB config over the top of the file config.
+		// So we unmarshal the DB config directly into our runtime seed, overwriting file defaults.
+		if err := json.Unmarshal(rawConfig, &rc.config.RuntimeSeed); err != nil {
+			return fmt.Errorf("failed to overlay db config: %w", err)
+		}
 	} else {
-		// Save the default seed to DB
-		seedBytes, err := json.Marshal(rc.config.RuntimeSeed)
-		if err != nil {
-			return err
-		}
-		if err := rc.repo.UpdateRuntimeConfig(ctx, seedBytes, "system_init"); err != nil {
-			return err
-		}
-		rc.logger.Info().Msg("seeded default runtime configuration into database")
+		rc.logger.Info().Msg("no database configuration found, seeding from config file")
+	}
+
+	// Save the final merged seed back to DB (this ensures newly added fields in the file
+	// get added to the DB's JSON blob)
+	seedBytes, err := json.Marshal(rc.config.RuntimeSeed)
+	if err != nil {
+		return err
+	}
+	if err := rc.repo.UpdateRuntimeConfig(ctx, seedBytes, "system_sync"); err != nil {
+		return err
 	}
 
 	return nil
