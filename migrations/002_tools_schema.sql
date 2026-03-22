@@ -32,3 +32,21 @@ INSERT INTO tools (name, description, parameters) VALUES
     }'::jsonb
 )
 ON CONFLICT (name) DO NOTHING;
+
+-- Seed data: SPAWN_TASK tool
+INSERT INTO tools (name, description, parameters) VALUES
+(
+    'SPAWN_TASK',
+    'Spawn a background task to be executed by a worker agent',
+    '{
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": "string",
+                "description": "The task description/prompt for the worker agent to execute"
+            }
+        },
+        "required": ["description"]
+    }'::jsonb
+)
+ON CONFLICT (name) DO NOTHING;

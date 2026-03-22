@@ -411,6 +411,46 @@ func (s *TaskService) SpawnSubTask(ctx context.Context, parent *models.TaskInsta
 	return task, nil
 }
 
+// SpawnRootTask creates a new task family and enqueues a root task instance
+func (s *TaskService) SpawnRootTask(ctx context.Context, sessionID uuid.UUID, ownerID string, description string, agentType models.AgentType, priority models.Priority) (*models.TaskInstance, error) {
+	taskID := uuid.New()
+	now := time.Now()
+
+	// Create task family
+	tf := &models.TaskFamily{
+		TaskID:           taskID,
+		SessionID:        sessionID,
+		RootDescription:  description,
+		Status:           "in_progress",
+		MaxDepthReached:  0,
+		CreatedAt:        now,
+	}
+
+	if err := s.repo.CreateTaskFamily(ctx, tf); err != nil {
+		return nil, fmt.Errorf("failed to create task family: %w", err)
+	}
+
+	// Create root task instance
+	task := &models.TaskInstance{
+		InstanceID:  uuid.New(),
+		TaskID:      taskID,
+		SessionID:   sessionID,
+		OwnerID:     ownerID,
+		Depth:       0,
+		Description: description,
+		AgentType:   agentType,
+		Status:      models.TaskStatusPending,
+		Priority:    priority,
+		CreatedAt:   now,
+	}
+
+	if err := s.CreateTask(ctx, task); err != nil {
+		return nil, fmt.Errorf("failed to create root task: %w", err)
+	}
+
+	return task, nil
+}
+
 func (s *TaskService) GetQueueStatus() map[string]interface{} {
 	return s.queue.GetQueueStatus()
 }

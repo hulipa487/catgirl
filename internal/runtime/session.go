@@ -12,18 +12,20 @@ import (
 	"github.com/hulipa487/catgirl/internal/repository"
 	"github.com/hulipa487/catgirl/internal/services/agent"
 	"github.com/hulipa487/catgirl/internal/services/llm"
+	"github.com/hulipa487/catgirl/internal/services/task"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
 
 type SessionService struct {
-	repo   *repository.Repository
-	config *config.Config
-	logger zerolog.Logger
-	llmSvc *llm.LLMService
-	sessions map[uuid.UUID]*Session
-	mu     sync.RWMutex
-	OnReply func(telegramUserID int64, message string)
+	repo        *repository.Repository
+	config      *config.Config
+	logger      zerolog.Logger
+	llmSvc      *llm.LLMService
+	taskService *task.TaskService
+	sessions    map[uuid.UUID]*Session
+	mu          sync.RWMutex
+	OnReply     func(telegramUserID int64, message string)
 }
 
 type Session struct {
@@ -57,13 +59,14 @@ type ConversationHistoryManager struct {
 	cfg          *config.ContextConfig
 }
 
-func NewSessionService(repo *repository.Repository, cfg *config.Config, logger zerolog.Logger, llmSvc *llm.LLMService) *SessionService {
+func NewSessionService(repo *repository.Repository, cfg *config.Config, logger zerolog.Logger, llmSvc *llm.LLMService, taskSvc *task.TaskService) *SessionService {
 	return &SessionService{
-		repo:     repo,
-		config:   cfg,
-		logger:   logger,
-		llmSvc:   llmSvc,
-		sessions: make(map[uuid.UUID]*Session),
+		repo:        repo,
+		config:      cfg,
+		logger:      logger,
+		llmSvc:      llmSvc,
+		taskService: taskSvc,
+		sessions:    make(map[uuid.UUID]*Session),
 	}
 }
 
@@ -278,11 +281,23 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 
 		// Process Tool Calls (or text response)
 		if len(msg.ToolCalls) > 0 {
+			// Add the assistant message with tool calls to messages
+			assistantMsg := llm.ChatMessage{
+				Role:       "assistant",
+				Content:    msg.Content,
+				ToolCalls:  msg.ToolCalls,
+			}
+			messages = append(messages, assistantMsg)
+
+			// Process each tool call and collect tool responses
 			for _, tc := range msg.ToolCalls {
 				s.logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Main Orchestrator called tool")
 
 				var args map[string]interface{}
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+
+				var toolResult string
+				var toolResultData map[string]interface{}
 
 				switch tc.Function.Name {
 				case "SEND_MESSAGE":
@@ -290,27 +305,96 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 						if s.OnReply != nil {
 							s.OnReply(telegramUserID, text)
 						}
-
-						replyResultMap := map[string]interface{}{"text": text}
-						replyResultBytes, _ := json.Marshal(replyResultMap)
-
-						agentTurn := &models.ConversationTurn{
-							Thought:   "I am sending a message.",
-							Action:    "SEND_MESSAGE",
-							Result:    replyResultBytes,
-							Tokens:    0,
-							Timestamp: time.Now(),
-						}
-						_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
+						toolResult = fmt.Sprintf(`{"status": "sent", "message": %s}`, tc.Function.Arguments)
+						toolResultData = map[string]interface{}{"status": "sent", "message": text}
 					}
 				case "SPAWN_TASK":
-					// Here you would enqueue the task
-					s.logger.Info().Msg("SPAWN_TASK tool called by orchestrator")
+					description, _ := args["description"].(string)
+					if description != "" {
+						taskInstance, err := s.taskService.SpawnRootTask(
+							context.Background(),
+							sessionID,
+							"orchestrator",
+							description,
+							models.AgentTypeGeneralPurpose,
+							models.PriorityNormal,
+						)
+						if err != nil {
+							s.logger.Error().Err(err).Msg("Failed to spawn task")
+							toolResult = fmt.Sprintf(`{"error": "failed to spawn task: %s"}`, err.Error())
+						} else {
+							s.logger.Info().
+								Str("instance_id", taskInstance.InstanceID.String()).
+								Str("task_id", taskInstance.TaskID.String()).
+								Msg("Task spawned by orchestrator")
+							toolResult = fmt.Sprintf(`{"status": "spawned", "instance_id": "%s", "task_id": "%s", "description": "%s"}`,
+								taskInstance.InstanceID.String(), taskInstance.TaskID.String(), description)
+							toolResultData = map[string]interface{}{
+								"status":      "spawned",
+								"instance_id": taskInstance.InstanceID.String(),
+								"task_id":     taskInstance.TaskID.String(),
+								"description": description,
+							}
+						}
+					}
 				case "COMPLETE_TASK":
 					s.logger.Info().Msg("COMPLETE_TASK tool called by orchestrator")
+					toolResult = `{"status": "acknowledged"}`
 				case "FAIL_TASK":
 					s.logger.Info().Msg("FAIL_TASK tool called by orchestrator")
+					toolResult = `{"status": "acknowledged"}`
+				default:
+					toolResult = `{"error": "unknown tool"}`
 				}
+
+				// Add tool response message for follow-up LLM call (OpenAI format)
+				toolResp := llm.ChatMessage{
+					Role:         "tool",
+					ToolCallID:   tc.ID,
+					Content:       toolResult,
+				}
+				messages = append(messages, toolResp)
+
+				// Record the tool call in conversation history
+				if toolResultData != nil {
+					resultBytes, _ := json.Marshal(toolResultData)
+					agentTurn := &models.ConversationTurn{
+						Thought:   fmt.Sprintf("Called %s tool", tc.Function.Name),
+						Action:    "TOOL_CALL",
+						Result:    resultBytes,
+						Tokens:    0,
+						Timestamp: time.Now(),
+					}
+					_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
+				}
+			}
+
+			// Follow-up LLM call with tool results
+			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.config.LLM.GPModel, messages, tools, 0)
+			if err != nil || len(resp.Choices) == 0 {
+				s.logger.Error().Err(err).Msg("Failed to call LLM for follow-up")
+				return
+			}
+
+			// Record usage for follow-up call
+			_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, s.config.LLM.GPModel, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
+
+			msg = resp.Choices[0].Message
+
+			// If there's still content (final response), send it to user
+			if msg.Content != "" {
+				if s.OnReply != nil {
+					s.OnReply(telegramUserID, msg.Content)
+				}
+
+				agentTurn := &models.ConversationTurn{
+					Thought:   "",
+					Action:    "SEND_MESSAGE",
+					Result:    []byte(fmt.Sprintf(`{"text": %s}`, msg.Content)),
+					Tokens:    0,
+					Timestamp: time.Now(),
+				}
+				_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
 			}
 		} else {
 			// Log the text as internal thought/reasoning, but DO NOT send it to the user
