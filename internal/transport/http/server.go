@@ -33,7 +33,6 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 	apiRouter.GET("/health/detailed", handlers.GetHealth)
 	apiRouter.GET("/api/v1/sessions", handlers.ListSessions)
 	apiRouter.GET("/api/v1/sessions/:session_id", handlers.GetSession)
-	apiRouter.PUT("/api/v1/sessions/:session_id/settings", handlers.UpdateSessionSettings)
 	apiRouter.GET("/api/v1/tasks", handlers.ListTasks)
 	apiRouter.GET("/api/v1/tasks/:instance_id", handlers.GetTask)
 	apiRouter.GET("/api/v1/queue/status", handlers.GetQueueStatus)
