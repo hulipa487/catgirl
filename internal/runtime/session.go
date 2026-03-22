@@ -214,12 +214,6 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 		if sysPrompt == "" {
 			sysPrompt = "You are an autonomous agent. You MUST use the SEND_MESSAGE tool to communicate with the user. Any raw text you output will be treated as internal thoughts and the user will not see it."
 		}
-		sysPrompt += "\n\nYou must signal your current state by using the SET_STATE tool at the end of your actions. " +
-			"States: \n" +
-			"- IDLE: You are waiting for the user to give instructions or respond.\n" +
-			"- WAIT: You are waiting for a background task to finish and have nothing else to tell the user right now.\n" +
-			"- CONTINUE: You have more to say/do immediately and the system should call you again.\n" +
-			"You must ALWAYS call SET_STATE before stopping."
 
 		messages := []llm.ChatMessage{
 			{Role: "system", Content: sysPrompt},
@@ -317,158 +311,69 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 					},
 				},
 			},
-			{
-				Type: "function",
-				Function: llm.ToolFunction{
-					Name:        "SET_STATE",
-					Description: "Signal the runtime what state you are in. IDLE = waiting for user. WAIT = waiting for a task. CONTINUE = loop again immediately.",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"state": map[string]interface{}{"type": "string", "enum": []string{"IDLE", "WAIT", "CONTINUE"}},
-						},
-						"required": []string{"state"},
-					},
-				},
-			},
 		}
 
-		for loopCount := 0; loopCount < 10; loopCount++ { // Safety limit
-			resp, err := s.llmSvc.ChatWithTools(context.Background(), s.config.LLM.GPModel, messages, tools, 0)
+		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.config.LLM.GPModel, messages, tools, 0)
 
-			if err != nil || len(resp.Choices) == 0 {
-				s.logger.Error().Err(err).Msg("Failed to call LLM for reply")
-				return
-			}
+		if err != nil || len(resp.Choices) == 0 {
+			s.logger.Error().Err(err).Msg("Failed to call LLM for reply")
+			return
+		}
 
-			msg := resp.Choices[0].Message
+		msg := resp.Choices[0].Message
 
-			// Record usage
-			billingSvc := agent.NewBillingService(s.repo, sessionID, fmt.Sprintf("%d", telegramUserID))
-			_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, s.config.LLM.GPModel, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
+		// Record usage
+		billingSvc := agent.NewBillingService(s.repo, sessionID, fmt.Sprintf("%d", telegramUserID))
+		_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, s.config.LLM.GPModel, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
 
-			// Add assistant's reply (with tool calls if any) to history
-			messages = append(messages, msg)
+		// Process Tool Calls (or text response)
+		if len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				s.logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Main Orchestrator called tool")
 
-			var targetState string
-			toolCalled := false
+				var args map[string]interface{}
+				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
-			// Process Tool Calls (or text response)
-			if len(msg.ToolCalls) > 0 {
-				toolCalled = true
-
-				// Execute tool calls and gather results
-				type toolCallResult struct {
-					id   string
-					name string
-					res  string
-				}
-				var results []toolCallResult
-				var resultsMu sync.Mutex
-				var wg sync.WaitGroup
-
-				for _, tc := range msg.ToolCalls {
-					wg.Add(1)
-					go func(tc llm.ToolCall) {
-						defer wg.Done()
-						s.logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Main Orchestrator called tool")
-
-						var args map[string]interface{}
-						_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-
-						var toolResultStr string
-
-						switch tc.Function.Name {
-						case "SEND_MESSAGE":
-							if text, ok := args["message"].(string); ok {
-								if s.OnReply != nil {
-									s.OnReply(telegramUserID, text)
-								}
-
-								replyResultMap := map[string]interface{}{"text": text}
-								replyResultBytes, _ := json.Marshal(replyResultMap)
-
-								agentTurn := &models.ConversationTurn{
-									Thought:   "I am sending a message.",
-									Action:    "SEND_MESSAGE",
-									Result:    replyResultBytes,
-									Tokens:    0,
-									Timestamp: time.Now(),
-								}
-								_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
-								toolResultStr = "Message sent successfully."
-							} else {
-								toolResultStr = "Error: Invalid message format."
-							}
-						case "SPAWN_TASK":
-							// Here you would enqueue the task
-							s.logger.Info().Msg("SPAWN_TASK tool called by orchestrator")
-							toolResultStr = "Task spawned successfully."
-						case "COMPLETE_TASK":
-							s.logger.Info().Msg("COMPLETE_TASK tool called by orchestrator")
-							toolResultStr = "Task marked completed."
-						case "FAIL_TASK":
-							s.logger.Info().Msg("FAIL_TASK tool called by orchestrator")
-							toolResultStr = "Task marked failed."
-						case "SET_STATE":
-							if state, ok := args["state"].(string); ok {
-								resultsMu.Lock()
-								targetState = state
-								resultsMu.Unlock()
-								toolResultStr = fmt.Sprintf("State set to %s.", state)
-							} else {
-								toolResultStr = "Error: Invalid state format."
-							}
-						default:
-							toolResultStr = "Error: Unknown tool."
+				switch tc.Function.Name {
+				case "SEND_MESSAGE":
+					if text, ok := args["message"].(string); ok {
+						if s.OnReply != nil {
+							s.OnReply(telegramUserID, text)
 						}
 
-						resultsMu.Lock()
-						results = append(results, toolCallResult{
-							id:   tc.ID,
-							name: tc.Function.Name,
-							res:  toolResultStr,
-						})
-						resultsMu.Unlock()
-					}(tc)
+						replyResultMap := map[string]interface{}{"text": text}
+						replyResultBytes, _ := json.Marshal(replyResultMap)
+
+						agentTurn := &models.ConversationTurn{
+							Thought:   "I am sending a message.",
+							Action:    "SEND_MESSAGE",
+							Result:    replyResultBytes,
+							Tokens:    0,
+							Timestamp: time.Now(),
+						}
+						_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
+					}
+				case "SPAWN_TASK":
+					// Here you would enqueue the task
+					s.logger.Info().Msg("SPAWN_TASK tool called by orchestrator")
+				case "COMPLETE_TASK":
+					s.logger.Info().Msg("COMPLETE_TASK tool called by orchestrator")
+				case "FAIL_TASK":
+					s.logger.Info().Msg("FAIL_TASK tool called by orchestrator")
 				}
-
-				// Wait for all tools in this parallel turn to complete
-				wg.Wait()
-
-				// Append all tool results to the conversation
-				for _, r := range results {
-					messages = append(messages, llm.ChatMessage{
-						Role:       "tool",
-						ToolCallID: r.id,
-						Name:       r.name,
-						Content:    r.res,
-					})
-				}
-			} else {
-				// Log the text as internal thought/reasoning, but DO NOT send it to the user
-				s.logger.Info().Str("content", msg.Content).Msg("Main Orchestrator reasoned (no tool called)")
-
-				agentTurn := &models.ConversationTurn{
-					Thought:   msg.Content,
-					Action:    "THINK",
-					Result:    []byte(`{}`), // No tool result to capture
-					Tokens:    0,
-					Timestamp: time.Now(),
-				}
-				_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
 			}
+		} else {
+			// Log the text as internal thought/reasoning, but DO NOT send it to the user
+			s.logger.Info().Str("content", msg.Content).Msg("Main Orchestrator reasoned (no tool called)")
 
-			if targetState == "IDLE" || targetState == "WAIT" {
-				s.logger.Info().Str("state", targetState).Msg("Orchestrator halting loop")
-				break
+			agentTurn := &models.ConversationTurn{
+				Thought:   msg.Content,
+				Action:    "THINK",
+				Result:    []byte(`{}`), // No tool result to capture
+				Tokens:    0,
+				Timestamp: time.Now(),
 			}
-
-			// If neither SET_STATE was called nor tool called, assume IDLE to prevent infinite loop
-			if !toolCalled && targetState == "" {
-				s.logger.Debug().Msg("No tool called and state not set, assuming IDLE to break loop")
-				break
-			}
+			_ = s.AddConversationTurn(context.Background(), sessionID, agentTurn)
 		}
 	}()
 

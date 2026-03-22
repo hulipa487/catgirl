@@ -23,8 +23,10 @@ go.work
 # IDE
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
+context.md
 
 # OS files
 .DS_Store
