@@ -135,9 +135,9 @@
               </div>
             </div>
 
-            <div class="card">
+            <div class="card mb-4">
               <div class="card-header d-flex justify-content-between align-items-center">
-                <span>LLM Providers</span>
+                <span>General Purpose LLM Providers</span>
                 <button class="btn btn-sm btn-primary" @click="addProvider('providers')">
                   <i class="bi bi-plus"></i> Add Provider
                 </button>
@@ -154,7 +154,7 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-if="config.llm.providers.length === 0">
+                      <tr v-if="!config.llm.providers || config.llm.providers.length === 0">
                         <td colspan="4" class="text-center py-4 text-muted">No providers configured. Click "Add Provider" above.</td>
                       </tr>
                       <tr v-for="(provider, index) in config.llm.providers" :key="'gp'+index">
@@ -172,6 +172,102 @@
                         </td>
                         <td class="text-end pe-4">
                           <button class="btn btn-sm btn-outline-danger" @click="config.llm.providers.splice(index, 1)" title="Remove Provider">
+                            <i class="bi bi-trash"></i>
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Reasoner Providers -->
+            <div class="card mb-4">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Reasoner LLM Providers</span>
+                <button class="btn btn-sm btn-primary" @click="addProvider('reasoner_providers')">
+                  <i class="bi bi-plus"></i> Add Provider
+                </button>
+              </div>
+              <div class="card-body p-0">
+                <div class="table-responsive">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th class="ps-4">Base URL</th>
+                        <th>API Key</th>
+                        <th>Models</th>
+                        <th class="text-end pe-4">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!config.llm.reasoner_providers || config.llm.reasoner_providers.length === 0">
+                        <td colspan="4" class="text-center py-4 text-muted">No reasoner providers configured.</td>
+                      </tr>
+                      <tr v-for="(provider, index) in config.llm.reasoner_providers" :key="'reasoner'+index">
+                        <td class="ps-4">
+                          <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
+                        </td>
+                        <td>
+                          <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-key"></i></span>
+                            <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
+                          </div>
+                        </td>
+                        <td>
+                          <input type="text" class="form-control form-control-sm" :value="provider.models.join(', ')" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
+                        </td>
+                        <td class="text-end pe-4">
+                          <button class="btn btn-sm btn-outline-danger" @click="config.llm.reasoner_providers.splice(index, 1)" title="Remove Provider">
+                            <i class="bi bi-trash"></i>
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Embedding Providers -->
+            <div class="card mb-4">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Embedding LLM Providers</span>
+                <button class="btn btn-sm btn-primary" @click="addProvider('embedding_providers')">
+                  <i class="bi bi-plus"></i> Add Provider
+                </button>
+              </div>
+              <div class="card-body p-0">
+                <div class="table-responsive">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th class="ps-4">Base URL</th>
+                        <th>API Key</th>
+                        <th>Models</th>
+                        <th class="text-end pe-4">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!config.llm.embedding_providers || config.llm.embedding_providers.length === 0">
+                        <td colspan="4" class="text-center py-4 text-muted">No embedding providers configured.</td>
+                      </tr>
+                      <tr v-for="(provider, index) in config.llm.embedding_providers" :key="'embedding'+index">
+                        <td class="ps-4">
+                          <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
+                        </td>
+                        <td>
+                          <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-key"></i></span>
+                            <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
+                          </div>
+                        </td>
+                        <td>
+                          <input type="text" class="form-control form-control-sm" :value="provider.models.join(', ')" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="text-embedding-3-large">
+                        </td>
+                        <td class="text-end pe-4">
+                          <button class="btn btn-sm btn-outline-danger" @click="config.llm.embedding_providers.splice(index, 1)" title="Remove Provider">
                             <i class="bi bi-trash"></i>
                           </button>
                         </td>
@@ -336,6 +432,8 @@ const fetchConfig = async () => {
 
     // Ensure nested arrays exist so UI doesn't crash
     if (!config.value.llm.providers) config.value.llm.providers = []
+    if (!config.value.llm.reasoner_providers) config.value.llm.reasoner_providers = []
+    if (!config.value.llm.embedding_providers) config.value.llm.embedding_providers = []
 
   } catch (err) {
     console.error('Failed to fetch config', err)

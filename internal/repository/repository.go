@@ -43,6 +43,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	var ragEnabled, ragAutoRetrieveEnabled, ragAutoRetrieveOnLlmCall bool
 	var ragDefaultTopK, ragAutoRetrieveTopK, ragAutoRetrieveMaxResults int
 	var ragMinSimilarity float64
+	var snapshotMaxStorageBytes int64
 
 	err := r.db.Pool.QueryRow(ctx, `
 		SELECT
@@ -60,7 +61,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		&maxTaskDepth, &maxQueueSize,
 		&embeddingDims, &maxTokens, &timeoutSecs, &systemPrompt, &agentSystemPrompt,
 		&minAgents, &maxAgents, &idleTimeoutSecs,
-		&snapshotEnabled, &snapshotStoragePath, new(int64), // Skipping max storage bytes binding for brevity since it's int64 and mapped later if needed
+		&snapshotEnabled, &snapshotStoragePath, &snapshotMaxStorageBytes,
 		&snapshotRetCompleted, &snapshotRetFailed, &snapshotRetExited, &snapshotRetInterrupted,
 		&telegramBotToken, &telegramWebhookURL, &telegramListenAddr,
 		&authJwtSecret, &authJwtIssuer, &authAllowedMemberships,
@@ -109,6 +110,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		Global: config.GlobalConfig{MaxTaskDepth: maxTaskDepth, MaxQueueSize: maxQueueSize},
 		LLM: config.LLMConfig{
 			Providers:          gpProviders,
+			ReasonerProviders:  reasonerProviders,
 			EmbeddingProviders: embeddingProviders,
 			EmbeddingDims:      embeddingDims,
 			MaxTokens:          maxTokens,
@@ -118,8 +120,9 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		},
 		AgentPool: config.AgentPoolConfig{MinAgents: minAgents, MaxAgents: maxAgents, IdleTimeoutSecs: idleTimeoutSecs},
 		Snapshot: config.SnapshotConfig{
-			Enabled:     snapshotEnabled,
-			StoragePath: snapshotStoragePath,
+			Enabled:         snapshotEnabled,
+			StoragePath:     snapshotStoragePath,
+			MaxStorageBytes: snapshotMaxStorageBytes,
 			Retention: config.RetentionConfig{
 				Completed:   snapshotRetCompleted,
 				Failed:      snapshotRetFailed,
@@ -164,7 +167,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			id, max_task_depth, max_queue_size,
 			embedding_dims, max_tokens, timeout_seconds, system_prompt, agent_system_prompt,
 			min_agents, max_agents, idle_timeout_seconds,
-			snapshot_enabled, snapshot_storage_path, snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
+			snapshot_enabled, snapshot_storage_path, snapshot_max_storage_bytes, snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
 			telegram_bot_token, telegram_webhook_url, telegram_listen_addr,
 			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
 			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
@@ -174,18 +177,18 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			1, $1, $2,
 			$3, $4, $5, $6, $7,
 			$8, $9, $10,
-			$11, $12, $13, $14, $15, $16,
-			$17, $18, $19,
-			$20, $21, $22,
-			$23, $24, $25, $26,
-			$27, $28, $29, $30, $31, $32, $33,
-			$34, NOW()
+			$11, $12, $13, $14, $15, $16, $17,
+			$18, $19, $20,
+			$21, $22, $23,
+			$24, $25, $26, $27,
+			$28, $29, $30, $31, $32, $33, $34,
+			$35, NOW()
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			max_task_depth = EXCLUDED.max_task_depth, max_queue_size = EXCLUDED.max_queue_size,
 			embedding_dims = EXCLUDED.embedding_dims, max_tokens = EXCLUDED.max_tokens, timeout_seconds = EXCLUDED.timeout_seconds, system_prompt = EXCLUDED.system_prompt, agent_system_prompt = EXCLUDED.agent_system_prompt,
 			min_agents = EXCLUDED.min_agents, max_agents = EXCLUDED.max_agents, idle_timeout_seconds = EXCLUDED.idle_timeout_seconds,
-			snapshot_enabled = EXCLUDED.snapshot_enabled, snapshot_storage_path = EXCLUDED.snapshot_storage_path, snapshot_retention_completed = EXCLUDED.snapshot_retention_completed, snapshot_retention_failed = EXCLUDED.snapshot_retention_failed, snapshot_retention_exited = EXCLUDED.snapshot_retention_exited, snapshot_retention_interrupted = EXCLUDED.snapshot_retention_interrupted,
+			snapshot_enabled = EXCLUDED.snapshot_enabled, snapshot_storage_path = EXCLUDED.snapshot_storage_path, snapshot_max_storage_bytes = EXCLUDED.snapshot_max_storage_bytes, snapshot_retention_completed = EXCLUDED.snapshot_retention_completed, snapshot_retention_failed = EXCLUDED.snapshot_retention_failed, snapshot_retention_exited = EXCLUDED.snapshot_retention_exited, snapshot_retention_interrupted = EXCLUDED.snapshot_retention_interrupted,
 			telegram_bot_token = EXCLUDED.telegram_bot_token, telegram_webhook_url = EXCLUDED.telegram_webhook_url, telegram_listen_addr = EXCLUDED.telegram_listen_addr,
 			auth_jwt_secret = EXCLUDED.auth_jwt_secret, auth_jwt_issuer = EXCLUDED.auth_jwt_issuer, auth_allowed_memberships = EXCLUDED.auth_allowed_memberships,
 			context_max_tokens = EXCLUDED.context_max_tokens, context_compaction_threshold = EXCLUDED.context_compaction_threshold, context_preserve_recent_turns = EXCLUDED.context_preserve_recent_turns, context_compaction_agent_type = EXCLUDED.context_compaction_agent_type,
@@ -195,7 +198,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		cfg.Global.MaxTaskDepth, cfg.Global.MaxQueueSize,
 		cfg.LLM.EmbeddingDims, cfg.LLM.MaxTokens, cfg.LLM.TimeoutSecs, cfg.LLM.SystemPrompt, cfg.LLM.AgentSystemPrompt,
 		cfg.AgentPool.MinAgents, cfg.AgentPool.MaxAgents, cfg.AgentPool.IdleTimeoutSecs,
-		cfg.Snapshot.Enabled, cfg.Snapshot.StoragePath, cfg.Snapshot.Retention.Completed, cfg.Snapshot.Retention.Failed, cfg.Snapshot.Retention.Exited, cfg.Snapshot.Retention.Interrupted,
+		cfg.Snapshot.Enabled, cfg.Snapshot.StoragePath, cfg.Snapshot.MaxStorageBytes, cfg.Snapshot.Retention.Completed, cfg.Snapshot.Retention.Failed, cfg.Snapshot.Retention.Exited, cfg.Snapshot.Retention.Interrupted,
 		cfg.Telegram.BotToken, cfg.Telegram.WebhookURL, cfg.Telegram.ListenAddr,
 		cfg.Auth.JWTSecret, cfg.Auth.JWTIssuer, membershipsJSON,
 		cfg.Context.MaxTokens, cfg.Context.CompactionThreshold, cfg.Context.PreserveRecentTurns, cfg.Context.CompactionAgentType,
@@ -223,6 +226,11 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 
 	for _, p := range cfg.LLM.Providers {
 		if err := insertProvider("gp", p); err != nil {
+			return err
+		}
+	}
+	for _, p := range cfg.LLM.ReasonerProviders {
+		if err := insertProvider("reasoner", p); err != nil {
 			return err
 		}
 	}
