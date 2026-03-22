@@ -247,23 +247,17 @@ func (gtq *GlobalTaskQueue) GetQueueStatus() map[string]interface{} {
 	allTasks := gtq.pq.GetAll()
 
 	byPriority := make(map[string]int)
-	bySession := make(map[string]int)
 	byAgentType := make(map[string]int)
-	byDepth := make(map[int]int)
 
 	for _, task := range allTasks {
 		byPriority[string(task.Priority)]++
-		bySession[task.SessionID.String()]++
 		byAgentType[string(task.AgentType)]++
-		byDepth[task.Depth]++
 	}
 
 	return map[string]interface{}{
 		"total_tasks":   len(allTasks),
 		"by_priority":   byPriority,
-		"by_session":    bySession,
 		"by_agent_type": byAgentType,
-		"by_depth":      byDepth,
 	}
 }
 
@@ -283,7 +277,7 @@ func NewTaskService(repo *repository.Repository, queue *GlobalTaskQueue, cfg *co
 	}
 }
 
-func (s *TaskService) CreateTask(ctx context.Context, task *models.TaskInstance) error {
+func (s *TaskService) CreateTask(ctx context.Context, task *models.TaskInstance, ownerID string, depth int) error {
 	if task.InstanceID == uuid.Nil {
 		task.InstanceID = uuid.New()
 	}
@@ -301,16 +295,24 @@ func (s *TaskService) CreateTask(ctx context.Context, task *models.TaskInstance)
 		return fmt.Errorf("failed to create task instance: %w", err)
 	}
 
-	if task.Depth > s.config.Global.MaxTaskDepth {
-		return fmt.Errorf("task depth %d exceeds maximum %d", task.Depth, s.config.Global.MaxTaskDepth)
+	if depth > s.config.Global.MaxTaskDepth {
+		return fmt.Errorf("task depth %d exceeds maximum %d", depth, s.config.Global.MaxTaskDepth)
 	}
 
 	s.queue.Enqueue(task)
 
+	tf, err := s.repo.GetTaskFamily(ctx, task.TaskID)
+	if err != nil {
+		return fmt.Errorf("failed to get task family: %w", err)
+	}
+	if tf == nil {
+		return fmt.Errorf("task family not found for task %s", task.TaskID)
+	}
+
 	channel := &models.TaskOwnerChannel{
 		ChannelID:      task.InstanceID,
 		TaskInstanceID: task.InstanceID,
-		OwnerID:        task.OwnerID,
+		OwnerID:        ownerID,
 		CreatedAt:      time.Now(),
 		LastActivity:   time.Now(),
 	}
@@ -321,8 +323,7 @@ func (s *TaskService) CreateTask(ctx context.Context, task *models.TaskInstance)
 	s.logger.Info().
 		Str("instance_id", task.InstanceID.String()).
 		Str("task_id", task.TaskID.String()).
-		Str("session_id", task.SessionID.String()).
-		Int("depth", task.Depth).
+		Str("session_id", tf.SessionID.String()).
 		Str("agent_type", string(task.AgentType)).
 		Msg("task created and enqueued")
 
@@ -378,8 +379,8 @@ func (s *TaskService) AssignTask(ctx context.Context, instanceID uuid.UUID, agen
 	return s.repo.UpdateTaskInstance(ctx, task)
 }
 
-func (s *TaskService) SpawnSubTask(ctx context.Context, parent *models.TaskInstance, description string, agentType models.AgentType, priority models.Priority) (*models.TaskInstance, error) {
-	newDepth := parent.Depth + 1
+func (s *TaskService) SpawnSubTask(ctx context.Context, parent *models.TaskInstance, description string, agentType models.AgentType, priority models.Priority, depth int) (*models.TaskInstance, error) {
+	newDepth := depth + 1
 	if newDepth > s.config.Global.MaxTaskDepth {
 		return nil, fmt.Errorf("sub-task depth %d exceeds maximum %d", newDepth, s.config.Global.MaxTaskDepth)
 	}
@@ -387,9 +388,6 @@ func (s *TaskService) SpawnSubTask(ctx context.Context, parent *models.TaskInsta
 	task := &models.TaskInstance{
 		InstanceID:       uuid.New(),
 		TaskID:           parent.TaskID,
-		SessionID:        parent.SessionID,
-		OwnerID:          parent.OwnerID,
-		Depth:            newDepth,
 		Description:      description,
 		AgentType:        agentType,
 		Status:           models.TaskStatusPending,
@@ -398,7 +396,7 @@ func (s *TaskService) SpawnSubTask(ctx context.Context, parent *models.TaskInsta
 		CreatedAt:        time.Now(),
 	}
 
-	if err := s.CreateTask(ctx, task); err != nil {
+	if err := s.CreateTask(ctx, task, parent.InstanceID.String(), newDepth); err != nil {
 		return nil, err
 	}
 
@@ -434,9 +432,6 @@ func (s *TaskService) SpawnRootTask(ctx context.Context, sessionID uuid.UUID, ow
 	task := &models.TaskInstance{
 		InstanceID:  uuid.New(),
 		TaskID:      taskID,
-		SessionID:   sessionID,
-		OwnerID:     ownerID,
-		Depth:       0,
 		Description: description,
 		AgentType:   agentType,
 		Status:      models.TaskStatusPending,
@@ -444,7 +439,7 @@ func (s *TaskService) SpawnRootTask(ctx context.Context, sessionID uuid.UUID, ow
 		CreatedAt:   now,
 	}
 
-	if err := s.CreateTask(ctx, task); err != nil {
+	if err := s.CreateTask(ctx, task, ownerID, 0); err != nil {
 		return nil, fmt.Errorf("failed to create root task: %w", err)
 	}
 

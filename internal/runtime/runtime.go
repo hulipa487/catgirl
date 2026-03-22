@@ -211,10 +211,16 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 
 	logger.Info().Msg("executing task")
 
-	agent.SetAgentServices(workerAgent, rc.repo, taskInstance.SessionID, rc.llmSvc, rc.config)
+	tf, err := rc.repo.GetTaskFamily(ctx, taskInstance.TaskID)
+	if err != nil || tf == nil {
+		logger.Error().Err(err).Msg("Failed to get task family")
+		return fmt.Errorf("failed to get task family")
+	}
+
+	agent.SetAgentServices(workerAgent, rc.repo, tf.SessionID, rc.llmSvc, rc.config)
 
 	// Get session context
-	session, err := rc.sessionSvc.GetSession(ctx, taskInstance.SessionID)
+	session, err := rc.sessionSvc.GetSession(ctx, tf.SessionID)
 	if err != nil || session == nil {
 		logger.Error().Err(err).Msg("Failed to get session context for task")
 		return fmt.Errorf("failed to get session context")

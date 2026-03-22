@@ -91,18 +91,18 @@ func (r *Repository) ListSessions(ctx context.Context, limit, offset int) ([]*mo
 
 func (r *Repository) CreateTaskFamily(ctx context.Context, tf *models.TaskFamily) error {
 	_, err := r.db.Pool.Exec(ctx, `
-		INSERT INTO task_families (task_id, session_id, container_id, root_description, status, max_depth_reached, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, tf.TaskID, tf.SessionID, tf.ContainerID, tf.RootDescription, tf.Status, tf.MaxDepthReached, tf.CreatedAt)
+		INSERT INTO task_families (task_id, session_id, container_id, root_description, status, max_depth_reached, created_at, container_snapshot_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, tf.TaskID, tf.SessionID, tf.ContainerID, tf.RootDescription, tf.Status, tf.MaxDepthReached, tf.CreatedAt, tf.ContainerSnapshotID)
 	return err
 }
 
 func (r *Repository) GetTaskFamily(ctx context.Context, taskID uuid.UUID) (*models.TaskFamily, error) {
 	var tf models.TaskFamily
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT task_id, session_id, container_id, root_description, status, max_depth_reached, created_at, completed_at
+		SELECT task_id, session_id, container_id, root_description, status, max_depth_reached, created_at, completed_at, container_snapshot_id
 		FROM task_families WHERE task_id = $1
-	`, taskID).Scan(&tf.TaskID, &tf.SessionID, &tf.ContainerID, &tf.RootDescription, &tf.Status, &tf.MaxDepthReached, &tf.CreatedAt, &tf.CompletedAt)
+	`, taskID).Scan(&tf.TaskID, &tf.SessionID, &tf.ContainerID, &tf.RootDescription, &tf.Status, &tf.MaxDepthReached, &tf.CreatedAt, &tf.CompletedAt, &tf.ContainerSnapshotID)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -111,9 +111,9 @@ func (r *Repository) GetTaskFamily(ctx context.Context, taskID uuid.UUID) (*mode
 
 func (r *Repository) UpdateTaskFamily(ctx context.Context, tf *models.TaskFamily) error {
 	_, err := r.db.Pool.Exec(ctx, `
-		UPDATE task_families SET container_id = $2, status = $3, max_depth_reached = $4, completed_at = $5
+		UPDATE task_families SET container_id = $2, status = $3, max_depth_reached = $4, completed_at = $5, container_snapshot_id = $6
 		WHERE task_id = $1
-	`, tf.TaskID, tf.ContainerID, tf.Status, tf.MaxDepthReached, tf.CompletedAt)
+	`, tf.TaskID, tf.ContainerID, tf.Status, tf.MaxDepthReached, tf.CompletedAt, tf.ContainerSnapshotID)
 	return err
 }
 
@@ -121,18 +121,18 @@ func (r *Repository) UpdateTaskFamily(ctx context.Context, tf *models.TaskFamily
 
 func (r *Repository) CreateTaskInstance(ctx context.Context, ti *models.TaskInstance) error {
 	_, err := r.db.Pool.Exec(ctx, `
-		INSERT INTO task_instances (instance_id, task_id, session_id, owner_id, depth, description, agent_type, status, priority, priority_score, assigned_agent_id, parent_instance_id, created_at, constraints)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-	`, ti.InstanceID, ti.TaskID, ti.SessionID, ti.OwnerID, ti.Depth, ti.Description, ti.AgentType, ti.Status, ti.Priority, ti.PriorityScore, ti.AssignedAgentID, ti.ParentInstanceID, ti.CreatedAt, ti.Constraints)
+		INSERT INTO task_instances (instance_id, task_id, description, agent_type, status, priority, priority_score, assigned_agent_id, parent_instance_id, created_at, constraints)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, ti.InstanceID, ti.TaskID, ti.Description, ti.AgentType, ti.Status, ti.Priority, ti.PriorityScore, ti.AssignedAgentID, ti.ParentInstanceID, ti.CreatedAt, ti.Constraints)
 	return err
 }
 
 func (r *Repository) GetTaskInstance(ctx context.Context, instanceID uuid.UUID) (*models.TaskInstance, error) {
 	var ti models.TaskInstance
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT instance_id, task_id, session_id, owner_id, depth, description, agent_type, status, priority, priority_score, assigned_agent_id, parent_instance_id, created_at, started_at, completed_at, result, error, constraints, container_snapshot_id
+		SELECT instance_id, task_id, description, agent_type, status, priority, priority_score, assigned_agent_id, parent_instance_id, created_at, started_at, completed_at, result, error, constraints
 		FROM task_instances WHERE instance_id = $1
-	`, instanceID).Scan(&ti.InstanceID, &ti.TaskID, &ti.SessionID, &ti.OwnerID, &ti.Depth, &ti.Description, &ti.AgentType, &ti.Status, &ti.Priority, &ti.PriorityScore, &ti.AssignedAgentID, &ti.ParentInstanceID, &ti.CreatedAt, &ti.StartedAt, &ti.CompletedAt, &ti.Result, &ti.Error, &ti.Constraints, &ti.ContainerSnapshotID)
+	`, instanceID).Scan(&ti.InstanceID, &ti.TaskID, &ti.Description, &ti.AgentType, &ti.Status, &ti.Priority, &ti.PriorityScore, &ti.AssignedAgentID, &ti.ParentInstanceID, &ti.CreatedAt, &ti.StartedAt, &ti.CompletedAt, &ti.Result, &ti.Error, &ti.Constraints)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -141,16 +141,18 @@ func (r *Repository) GetTaskInstance(ctx context.Context, instanceID uuid.UUID) 
 
 func (r *Repository) UpdateTaskInstance(ctx context.Context, ti *models.TaskInstance) error {
 	_, err := r.db.Pool.Exec(ctx, `
-		UPDATE task_instances SET status = $2, priority_score = $3, assigned_agent_id = $4, started_at = $5, completed_at = $6, result = $7, error = $8, container_snapshot_id = $9
+		UPDATE task_instances SET status = $2, priority_score = $3, assigned_agent_id = $4, started_at = $5, completed_at = $6, result = $7, error = $8
 		WHERE instance_id = $1
-	`, ti.InstanceID, ti.Status, ti.PriorityScore, ti.AssignedAgentID, ti.StartedAt, ti.CompletedAt, ti.Result, ti.Error, ti.ContainerSnapshotID)
+	`, ti.InstanceID, ti.Status, ti.PriorityScore, ti.AssignedAgentID, ti.StartedAt, ti.CompletedAt, ti.Result, ti.Error)
 	return err
 }
 
 func (r *Repository) ListTaskInstancesBySession(ctx context.Context, sessionID uuid.UUID, limit, offset int) ([]*models.TaskInstance, error) {
 	rows, err := r.db.Pool.Query(ctx, `
-		SELECT instance_id, task_id, session_id, owner_id, depth, description, agent_type, status, priority, priority_score, assigned_agent_id, parent_instance_id, created_at, started_at, completed_at, result, error, constraints, container_snapshot_id
-		FROM task_instances WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+		SELECT ti.instance_id, ti.task_id, ti.description, ti.agent_type, ti.status, ti.priority, ti.priority_score, ti.assigned_agent_id, ti.parent_instance_id, ti.created_at, ti.started_at, ti.completed_at, ti.result, ti.error, ti.constraints
+		FROM task_instances ti
+		JOIN task_families tf ON ti.task_id = tf.task_id
+		WHERE tf.session_id = $1 ORDER BY ti.created_at DESC LIMIT $2 OFFSET $3
 	`, sessionID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -160,7 +162,7 @@ func (r *Repository) ListTaskInstancesBySession(ctx context.Context, sessionID u
 	var instances []*models.TaskInstance
 	for rows.Next() {
 		var ti models.TaskInstance
-		if err := rows.Scan(&ti.InstanceID, &ti.TaskID, &ti.SessionID, &ti.OwnerID, &ti.Depth, &ti.Description, &ti.AgentType, &ti.Status, &ti.Priority, &ti.PriorityScore, &ti.AssignedAgentID, &ti.ParentInstanceID, &ti.CreatedAt, &ti.StartedAt, &ti.CompletedAt, &ti.Result, &ti.Error, &ti.Constraints, &ti.ContainerSnapshotID); err != nil {
+		if err := rows.Scan(&ti.InstanceID, &ti.TaskID, &ti.Description, &ti.AgentType, &ti.Status, &ti.Priority, &ti.PriorityScore, &ti.AssignedAgentID, &ti.ParentInstanceID, &ti.CreatedAt, &ti.StartedAt, &ti.CompletedAt, &ti.Result, &ti.Error, &ti.Constraints); err != nil {
 			return nil, err
 		}
 		instances = append(instances, &ti)
@@ -170,7 +172,7 @@ func (r *Repository) ListTaskInstancesBySession(ctx context.Context, sessionID u
 
 func (r *Repository) ListTaskInstancesByStatus(ctx context.Context, status models.TaskStatus, limit int) ([]*models.TaskInstance, error) {
 	rows, err := r.db.Pool.Query(ctx, `
-		SELECT instance_id, task_id, session_id, owner_id, depth, description, agent_type, status, priority, priority_score, assigned_agent_id, parent_instance_id, created_at, started_at, completed_at, result, error, constraints, container_snapshot_id
+		SELECT instance_id, task_id, description, agent_type, status, priority, priority_score, assigned_agent_id, parent_instance_id, created_at, started_at, completed_at, result, error, constraints
 		FROM task_instances WHERE status = $1 ORDER BY priority_score DESC, created_at ASC LIMIT $2
 	`, status, limit)
 	if err != nil {
@@ -181,7 +183,7 @@ func (r *Repository) ListTaskInstancesByStatus(ctx context.Context, status model
 	var instances []*models.TaskInstance
 	for rows.Next() {
 		var ti models.TaskInstance
-		if err := rows.Scan(&ti.InstanceID, &ti.TaskID, &ti.SessionID, &ti.OwnerID, &ti.Depth, &ti.Description, &ti.AgentType, &ti.Status, &ti.Priority, &ti.PriorityScore, &ti.AssignedAgentID, &ti.ParentInstanceID, &ti.CreatedAt, &ti.StartedAt, &ti.CompletedAt, &ti.Result, &ti.Error, &ti.Constraints, &ti.ContainerSnapshotID); err != nil {
+		if err := rows.Scan(&ti.InstanceID, &ti.TaskID, &ti.Description, &ti.AgentType, &ti.Status, &ti.Priority, &ti.PriorityScore, &ti.AssignedAgentID, &ti.ParentInstanceID, &ti.CreatedAt, &ti.StartedAt, &ti.CompletedAt, &ti.Result, &ti.Error, &ti.Constraints); err != nil {
 			return nil, err
 		}
 		instances = append(instances, &ti)
@@ -193,18 +195,18 @@ func (r *Repository) ListTaskInstancesByStatus(ctx context.Context, status model
 
 func (r *Repository) CreateContainerSnapshot(ctx context.Context, cs *models.ContainerSnapshot) error {
 	_, err := r.db.Pool.Exec(ctx, `
-		INSERT INTO container_snapshots (snapshot_id, task_id, instance_id, session_id, container_id, image_id, image_name, reason, volumes, environment, metadata, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-	`, cs.SnapshotID, cs.TaskID, cs.InstanceID, cs.SessionID, cs.ContainerID, cs.ImageID, cs.ImageName, cs.Reason, cs.Volumes, cs.Environment, cs.Metadata, cs.CreatedAt, cs.ExpiresAt)
+		INSERT INTO container_snapshots (snapshot_id, task_id, session_id, container_id, image_id, image_name, reason, volumes, environment, metadata, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, cs.SnapshotID, cs.TaskID, cs.SessionID, cs.ContainerID, cs.ImageID, cs.ImageName, cs.Reason, cs.Volumes, cs.Environment, cs.Metadata, cs.CreatedAt, cs.ExpiresAt)
 	return err
 }
 
 func (r *Repository) GetContainerSnapshot(ctx context.Context, snapshotID uuid.UUID) (*models.ContainerSnapshot, error) {
 	var cs models.ContainerSnapshot
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT snapshot_id, task_id, instance_id, session_id, container_id, image_id, image_name, reason, volumes, environment, metadata, created_at, expires_at, deleted_at
+		SELECT snapshot_id, task_id, session_id, container_id, image_id, image_name, reason, volumes, environment, metadata, created_at, expires_at, deleted_at
 		FROM container_snapshots WHERE snapshot_id = $1 AND deleted_at IS NULL
-	`, snapshotID).Scan(&cs.SnapshotID, &cs.TaskID, &cs.InstanceID, &cs.SessionID, &cs.ContainerID, &cs.ImageID, &cs.ImageName, &cs.Reason, &cs.Volumes, &cs.Environment, &cs.Metadata, &cs.CreatedAt, &cs.ExpiresAt, &cs.DeletedAt)
+	`, snapshotID).Scan(&cs.SnapshotID, &cs.TaskID, &cs.SessionID, &cs.ContainerID, &cs.ImageID, &cs.ImageName, &cs.Reason, &cs.Volumes, &cs.Environment, &cs.Metadata, &cs.CreatedAt, &cs.ExpiresAt, &cs.DeletedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -213,7 +215,7 @@ func (r *Repository) GetContainerSnapshot(ctx context.Context, snapshotID uuid.U
 
 func (r *Repository) ListContainerSnapshotsBySession(ctx context.Context, sessionID uuid.UUID, limit, offset int) ([]*models.ContainerSnapshot, error) {
 	rows, err := r.db.Pool.Query(ctx, `
-		SELECT snapshot_id, task_id, instance_id, session_id, container_id, image_id, image_name, reason, volumes, environment, metadata, created_at, expires_at, deleted_at
+		SELECT snapshot_id, task_id, session_id, container_id, image_id, image_name, reason, volumes, environment, metadata, created_at, expires_at, deleted_at
 		FROM container_snapshots WHERE session_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC LIMIT $2 OFFSET $3
 	`, sessionID, limit, offset)
@@ -225,7 +227,7 @@ func (r *Repository) ListContainerSnapshotsBySession(ctx context.Context, sessio
 	var snapshots []*models.ContainerSnapshot
 	for rows.Next() {
 		var cs models.ContainerSnapshot
-		if err := rows.Scan(&cs.SnapshotID, &cs.TaskID, &cs.InstanceID, &cs.SessionID, &cs.ContainerID, &cs.ImageID, &cs.ImageName, &cs.Reason, &cs.Volumes, &cs.Environment, &cs.Metadata, &cs.CreatedAt, &cs.ExpiresAt, &cs.DeletedAt); err != nil {
+		if err := rows.Scan(&cs.SnapshotID, &cs.TaskID, &cs.SessionID, &cs.ContainerID, &cs.ImageID, &cs.ImageName, &cs.Reason, &cs.Volumes, &cs.Environment, &cs.Metadata, &cs.CreatedAt, &cs.ExpiresAt, &cs.DeletedAt); err != nil {
 			return nil, err
 		}
 		snapshots = append(snapshots, &cs)
@@ -242,7 +244,7 @@ func (r *Repository) DeleteContainerSnapshot(ctx context.Context, snapshotID uui
 
 func (r *Repository) ListExpiredSnapshots(ctx context.Context) ([]*models.ContainerSnapshot, error) {
 	rows, err := r.db.Pool.Query(ctx, `
-		SELECT snapshot_id, task_id, instance_id, session_id, container_id, image_id, image_name, reason, volumes, environment, metadata, created_at, expires_at, deleted_at
+		SELECT snapshot_id, task_id, session_id, container_id, image_id, image_name, reason, volumes, environment, metadata, created_at, expires_at, deleted_at
 		FROM container_snapshots WHERE expires_at < $1 AND deleted_at IS NULL
 	`, time.Now())
 	if err != nil {
@@ -253,7 +255,7 @@ func (r *Repository) ListExpiredSnapshots(ctx context.Context) ([]*models.Contai
 	var snapshots []*models.ContainerSnapshot
 	for rows.Next() {
 		var cs models.ContainerSnapshot
-		if err := rows.Scan(&cs.SnapshotID, &cs.TaskID, &cs.InstanceID, &cs.SessionID, &cs.ContainerID, &cs.ImageID, &cs.ImageName, &cs.Reason, &cs.Volumes, &cs.Environment, &cs.Metadata, &cs.CreatedAt, &cs.ExpiresAt, &cs.DeletedAt); err != nil {
+		if err := rows.Scan(&cs.SnapshotID, &cs.TaskID, &cs.SessionID, &cs.ContainerID, &cs.ImageID, &cs.ImageName, &cs.Reason, &cs.Volumes, &cs.Environment, &cs.Metadata, &cs.CreatedAt, &cs.ExpiresAt, &cs.DeletedAt); err != nil {
 			return nil, err
 		}
 		snapshots = append(snapshots, &cs)

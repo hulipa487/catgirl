@@ -27,21 +27,20 @@ func NewSnapshotService(repo *repository.Repository, cfg *config.SnapshotConfig,
 	}
 }
 
-func (s *SnapshotService) CreateSnapshot(ctx context.Context, instance *models.TaskInstance, reason models.SnapshotReason) (*models.ContainerSnapshot, error) {
+func (s *SnapshotService) CreateSnapshot(ctx context.Context, tf *models.TaskFamily, reason models.SnapshotReason) (*models.ContainerSnapshot, error) {
 	if !s.config.Enabled {
 		return nil, nil
 	}
 
 	snapshotID := uuid.New()
-	imageName := fmt.Sprintf("snapshot_%s_%d", instance.InstanceID.String()[:8], time.Now().Unix())
+	imageName := fmt.Sprintf("snapshot_%s_%d", tf.TaskID.String()[:8], time.Now().Unix())
 
 	envJSON, _ := json.Marshal(map[string]string{
-		"CATGIRL_TASK_ID":   instance.TaskID.String(),
-		"CATGIRL_SESSION_ID": instance.SessionID.String(),
+		"CATGIRL_TASK_ID":   tf.TaskID.String(),
+		"CATGIRL_SESSION_ID": tf.SessionID.String(),
 	})
 
 	metadata := map[string]interface{}{
-		"agent_id":             instance.AssignedAgentID,
 		"execution_time_seconds": 0,
 		"memory_used_bytes":    0,
 		"cpu_time_seconds":     0,
@@ -52,10 +51,9 @@ func (s *SnapshotService) CreateSnapshot(ctx context.Context, instance *models.T
 
 	snapshot := &models.ContainerSnapshot{
 		SnapshotID:  snapshotID,
-		TaskID:      instance.TaskID,
-		InstanceID:  instance.InstanceID,
-		SessionID:   instance.SessionID,
-		ContainerID: "",
+		TaskID:      tf.TaskID,
+		SessionID:   tf.SessionID,
+		ContainerID: tf.ContainerID,
 		ImageID:     "",
 		ImageName:   imageName,
 		Reason:      reason,
@@ -70,10 +68,10 @@ func (s *SnapshotService) CreateSnapshot(ctx context.Context, instance *models.T
 		return nil, fmt.Errorf("failed to create snapshot: %w", err)
 	}
 
-	instance.ContainerSnapshotID = &snapshotID
+	tf.ContainerSnapshotID = &snapshotID
 	s.logger.Info().
 		Str("snapshot_id", snapshotID.String()).
-		Str("instance_id", instance.InstanceID.String()).
+		Str("task_id", tf.TaskID.String()).
 		Str("reason", string(reason)).
 		Msg("snapshot created")
 

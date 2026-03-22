@@ -27,14 +27,15 @@ type Session struct {
 }
 
 type TaskFamily struct {
-	TaskID            uuid.UUID  `json:"task_id" db:"task_id"`
-	SessionID         uuid.UUID  `json:"session_id" db:"session_id"`
-	ContainerID      string     `json:"container_id" db:"container_id"`
-	RootDescription  string     `json:"root_description" db:"root_description"`
-	Status            string     `json:"status" db:"status"`
-	MaxDepthReached   int        `json:"max_depth_reached" db:"max_depth_reached"`
-	CreatedAt         time.Time  `json:"created_at" db:"created_at"`
-	CompletedAt       *time.Time `json:"completed_at" db:"completed_at"`
+	TaskID              uuid.UUID  `json:"task_id" db:"task_id"`
+	SessionID           uuid.UUID  `json:"session_id" db:"session_id"`
+	ContainerID         string     `json:"container_id" db:"container_id"`
+	RootDescription     string     `json:"root_description" db:"root_description"`
+	Status              string     `json:"status" db:"status"`
+	MaxDepthReached     int        `json:"max_depth_reached" db:"max_depth_reached"`
+	CreatedAt           time.Time  `json:"created_at" db:"created_at"`
+	CompletedAt         *time.Time `json:"completed_at" db:"completed_at"`
+	ContainerSnapshotID *uuid.UUID `json:"container_snapshot_id" db:"container_snapshot_id"`
 }
 
 type TaskStatus string
@@ -65,25 +66,21 @@ const (
 )
 
 type TaskInstance struct {
-	InstanceID          uuid.UUID       `json:"instance_id" db:"instance_id"`
-	TaskID              uuid.UUID       `json:"task_id" db:"task_id"`
-	SessionID           uuid.UUID       `json:"session_id" db:"session_id"`
-	OwnerID             string          `json:"owner_id" db:"owner_id"`
-	Depth               int             `json:"depth" db:"depth"`
-	Description         string          `json:"description" db:"description"`
-	AgentType           AgentType       `json:"agent_type" db:"agent_type"`
-	Status              TaskStatus      `json:"status" db:"status"`
-	Priority            Priority        `json:"priority" db:"priority"`
-	PriorityScore       float64         `json:"priority_score" db:"priority_score"`
-	AssignedAgentID     *string         `json:"assigned_agent_id" db:"assigned_agent_id"`
-	ParentInstanceID    *uuid.UUID      `json:"parent_instance_id" db:"parent_instance_id"`
-	CreatedAt           time.Time       `json:"created_at" db:"created_at"`
-	StartedAt           *time.Time      `json:"started_at" db:"started_at"`
-	CompletedAt         *time.Time      `json:"completed_at" db:"completed_at"`
-	Result              json.RawMessage `json:"result" db:"result"`
-	Error               *string         `json:"error" db:"error"`
-	Constraints         json.RawMessage `json:"constraints" db:"constraints"`
-	ContainerSnapshotID *uuid.UUID      `json:"container_snapshot_id" db:"container_snapshot_id"`
+	InstanceID       uuid.UUID       `json:"instance_id" db:"instance_id"`
+	TaskID           uuid.UUID       `json:"task_id" db:"task_id"`
+	Description      string          `json:"description" db:"description"`
+	AgentType        AgentType       `json:"agent_type" db:"agent_type"`
+	Status           TaskStatus      `json:"status" db:"status"`
+	Priority         Priority        `json:"priority" db:"priority"`
+	PriorityScore    float64         `json:"priority_score" db:"priority_score"`
+	AssignedAgentID  *string         `json:"assigned_agent_id" db:"assigned_agent_id"`
+	ParentInstanceID *uuid.UUID      `json:"parent_instance_id" db:"parent_instance_id"`
+	CreatedAt        time.Time       `json:"created_at" db:"created_at"`
+	StartedAt        *time.Time      `json:"started_at" db:"started_at"`
+	CompletedAt      *time.Time      `json:"completed_at" db:"completed_at"`
+	Result           json.RawMessage `json:"result" db:"result"`
+	Error            *string         `json:"error" db:"error"`
+	Constraints      json.RawMessage `json:"constraints" db:"constraints"`
 }
 
 type SnapshotReason string
@@ -98,7 +95,6 @@ const (
 type ContainerSnapshot struct {
 	SnapshotID   uuid.UUID       `json:"snapshot_id" db:"snapshot_id"`
 	TaskID       uuid.UUID       `json:"task_id" db:"task_id"`
-	InstanceID   uuid.UUID       `json:"instance_id" db:"instance_id"`
 	SessionID    uuid.UUID       `json:"session_id" db:"session_id"`
 	ContainerID  string          `json:"container_id" db:"container_id"`
 	ImageID      string          `json:"image_id" db:"image_id"`
@@ -107,7 +103,7 @@ type ContainerSnapshot struct {
 	Volumes      json.RawMessage `json:"volumes" db:"volumes"`
 	Environment  json.RawMessage `json:"environment" db:"environment"`
 	Metadata     json.RawMessage `json:"metadata" db:"metadata"`
-	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
+	CreatedAt    time.Time       `json:"created_at" db:"created_at"`
 	ExpiresAt    *time.Time      `json:"expires_at" db:"expires_at"`
 	DeletedAt    *time.Time      `json:"deleted_at" db:"deleted_at"`
 }
