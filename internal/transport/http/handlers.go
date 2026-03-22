@@ -85,12 +85,37 @@ func (h *Handlers) HealthCheck(c *gin.Context) {
 func (h *Handlers) GetHealth(c *gin.Context) {
 	ctx := c.Request.Context()
 	dbHealth := h.runtime.GetRepository().Ping(ctx)
+	repo := h.runtime.GetRepository()
+
+	// Get global usage stats
+	globalUsage, _ := repo.GetGlobalUsageSummary(ctx)
+
+	// Get usage by model
+	usageByModel, _ := repo.GetUsageSummaryByModel(ctx)
+
+	// Get usage by telegram user (per bot)
+	usageByBot, _ := repo.GetUsageSummaryByTelegramUser(ctx)
+
+	// Get agent pool status
+	agentPool := h.runtime.GetAgentPool()
+	agentStatus := agentPool.GetPoolStatus()
+
+	// Get queue status
+	taskSvc := h.runtime.GetTaskService()
+	queueStatus := taskSvc.GetQueueStatus()
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "ok",
 		"database": dbHealth,
 		"config": gin.H{
 			"server_port": h.config.Server.Port,
+		},
+		"agents": agentStatus,
+		"queue":  queueStatus,
+		"usage": gin.H{
+			"global":     globalUsage,
+			"by_model":   usageByModel,
+			"by_bot":     usageByBot,
 		},
 	})
 }

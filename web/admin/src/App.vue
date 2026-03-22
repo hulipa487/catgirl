@@ -15,12 +15,12 @@
           </li>
           <li class="nav-item">
             <a class="nav-link" :class="{ 'active': activeTab === 'llm' }" @click.prevent="activeTab = 'llm'" href="#">
-              <i class="bi bi-cpu me-2"></i> AI Models & Prompts
+              <i class="bi bi-cpu me-2"></i> LLM Settings
             </a>
           </li>
           <li class="nav-item">
             <a class="nav-link" :class="{ 'active': activeTab === 'telegram' }" @click.prevent="activeTab = 'telegram'" href="#">
-              <i class="bi bi-telegram me-2"></i> Telegram Integration
+              <i class="bi bi-telegram me-2"></i> Telegram Bots
             </a>
           </li>
           <li class="nav-item">
@@ -36,8 +36,8 @@
         <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pb-2 mb-4 border-bottom">
           <h1 class="h2 fw-bold text-dark">
             {{ activeTab === 'dashboard' ? 'Dashboard' :
-               activeTab === 'llm' ? 'AI Models & Prompts' :
-               activeTab === 'telegram' ? 'Telegram Integration' : 'Agent Resources' }}
+               activeTab === 'llm' ? 'LLM Settings' :
+               activeTab === 'telegram' ? 'Telegram Bots' : 'Agent Resources' }}
           </h1>
           <div class="btn-toolbar mb-2 mb-md-0" v-if="activeTab !== 'dashboard'">
             <button @click="saveConfig" type="button" class="btn btn-primary shadow-sm" :disabled="saving || !config">
@@ -60,13 +60,14 @@
 
           <!-- DASHBOARD TAB -->
           <div v-if="activeTab === 'dashboard'">
+            <!-- Status Cards Row -->
             <div class="row">
-              <div class="col-md-6 col-lg-4 mb-4">
+              <div class="col-md-4 mb-4">
                 <div class="card h-100">
                   <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start">
                       <div>
-                        <h6 class="text-muted fw-semibold mb-1">API Server Status</h6>
+                        <h6 class="text-muted fw-semibold mb-1">API Server</h6>
                         <h3 class="fw-bold mb-0 text-success">
                           <i class="bi bi-check-circle-fill me-1"></i> Online
                         </h3>
@@ -82,14 +83,15 @@
                 </div>
               </div>
 
-              <div class="col-md-6 col-lg-4 mb-4">
+              <div class="col-md-4 mb-4">
                 <div class="card h-100">
                   <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start">
                       <div>
-                        <h6 class="text-muted fw-semibold mb-1">Database Connection</h6>
+                        <h6 class="text-muted fw-semibold mb-1">Database</h6>
                         <h3 class="fw-bold mb-0" :class="health?.database?.healthy ? 'text-success' : 'text-danger'">
-                          <i class="bi bi-database me-1"></i> {{ health?.database?.healthy ? 'Healthy' : 'Error' }}
+                          <i class="bi me-1" :class="health?.database?.healthy ? 'bi-check-circle-fill text-success' : 'bi-x-circle-fill text-danger'"></i>
+                          {{ health?.database?.healthy ? 'Healthy' : 'Error' }}
                         </h3>
                       </div>
                       <div class="p-2 bg-primary bg-opacity-10 rounded">
@@ -102,160 +104,177 @@
                   </div>
                 </div>
               </div>
+
+              <div class="col-md-4 mb-4">
+                <div class="card h-100">
+                  <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                      <div>
+                        <h6 class="text-muted fw-semibold mb-1">Active Workers</h6>
+                        <h3 class="fw-bold mb-0 text-primary">
+                          <i class="bi bi-robot me-1"></i>
+                          {{ health?.agents?.busy || 0 }}
+                        </h3>
+                      </div>
+                      <div class="p-2 bg-primary bg-opacity-10 rounded">
+                        <i class="bi bi-people text-primary fs-4"></i>
+                      </div>
+                    </div>
+                    <div class="mt-3 small text-muted" v-if="health">
+                      Idle: <strong>{{ health?.agents?.idle || 0 }}</strong> |
+                      Total: <strong>{{ health?.agents?.total || 0 }}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div class="card">
+            <!-- Global Usage Stats -->
+            <div class="row mb-4">
+              <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                  <div class="card-body text-center">
+                    <h6 class="text-muted mb-1" style="opacity: 0.8;">Input Tokens</h6>
+                    <h2 class="mb-0">{{ formatNumber(health?.usage?.global?.total_input_tokens) }}</h2>
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="card bg-success text-white">
+                  <div class="card-body text-center">
+                    <h6 class="text-muted mb-1" style="opacity: 0.8;">Output Tokens</h6>
+                    <h2 class="mb-0">{{ formatNumber(health?.usage?.global?.total_output_tokens) }}</h2>
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="card bg-info text-white">
+                  <div class="card-body text-center">
+                    <h6 class="text-muted mb-1" style="opacity: 0.8;">Total Tokens</h6>
+                    <h2 class="mb-0">{{ formatNumber(health?.usage?.global?.total_tokens) }}</h2>
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="card bg-secondary text-white">
+                  <div class="card-body text-center">
+                    <h6 class="text-muted mb-1" style="opacity: 0.8;">Requests</h6>
+                    <h2 class="mb-0">{{ formatNumber(health?.usage?.global?.record_count) }}</h2>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Per Model Usage -->
+            <div class="card mb-4">
               <div class="card-header d-flex justify-content-between align-items-center">
-                <span>System Metrics Overview</span>
+                <span>Usage by Model</span>
                 <button class="btn btn-sm btn-outline-secondary" @click="fetchHealth">
                   <i class="bi bi-arrow-clockwise"></i> Refresh
                 </button>
               </div>
-              <div class="card-body bg-light">
-                <pre class="mb-0 text-dark" style="font-family: 'Courier New', Courier, monospace; font-size: 0.85rem;">{{ JSON.stringify(health, null, 2) }}</pre>
+              <div class="card-body p-0">
+                <div class="table-responsive">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Model</th>
+                        <th class="text-end">Input Tokens</th>
+                        <th class="text-end">Output Tokens</th>
+                        <th class="text-end">Total Tokens</th>
+                        <th class="text-end">Requests</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!health?.usage?.by_model?.length">
+                        <td colspan="5" class="text-center py-4 text-muted">No usage data available</td>
+                      </tr>
+                      <tr v-for="(row, index) in health?.usage?.by_model" :key="'model'+index">
+                        <td class="ps-4"><span class="font-monospace">{{ row.model || 'unknown' }}</span></td>
+                        <td class="text-end">{{ formatNumber(row.input_tokens) }}</td>
+                        <td class="text-end">{{ formatNumber(row.output_tokens) }}</td>
+                        <td class="text-end"><strong>{{ formatNumber(row.total_tokens) }}</strong></td>
+                        <td class="text-end">{{ formatNumber(row.request_count) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Per Bot Usage -->
+            <div class="card mb-4">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Usage by Telegram Bot</span>
+              </div>
+              <div class="card-body p-0">
+                <div class="table-responsive">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Telegram User ID</th>
+                        <th class="text-end">Input Tokens</th>
+                        <th class="text-end">Output Tokens</th>
+                        <th class="text-end">Total Tokens</th>
+                        <th class="text-end">Requests</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!health?.usage?.by_bot?.length">
+                        <td colspan="5" class="text-center py-4 text-muted">No bot usage data available</td>
+                      </tr>
+                      <tr v-for="(row, index) in health?.usage?.by_bot" :key="'bot'+index">
+                        <td class="ps-4"><strong>{{ row.telegram_user_id }}</strong></td>
+                        <td class="text-end">{{ formatNumber(row.input_tokens) }}</td>
+                        <td class="text-end">{{ formatNumber(row.output_tokens) }}</td>
+                        <td class="text-end"><strong>{{ formatNumber(row.total_tokens) }}</strong></td>
+                        <td class="text-end">{{ formatNumber(row.request_count) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sessions List -->
+            <div class="card mb-4">
+              <div class="card-header">
+                <span>Active Sessions</span>
+              </div>
+              <div class="card-body p-0">
+                <div class="table-responsive">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Session ID</th>
+                        <th>Telegram User</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!sessions?.length">
+                        <td colspan="4" class="text-center py-4 text-muted">No sessions found</td>
+                      </tr>
+                      <tr v-for="session in sessions" :key="session.id">
+                        <td class="ps-4"><span class="font-monospace small">{{ session.id.substring(0, 8) }}...</span></td>
+                        <td><strong>{{ session.telegram_user_id }}</strong></td>
+                        <td><span class="badge bg-success">{{ session.status }}</span></td>
+                        <td class="text-muted small">{{ formatDate(session.created_at) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- LLM CONFIG TAB -->
+          <!-- LLM SETTINGS TAB -->
           <div v-if="activeTab === 'llm'">
             <div class="card mb-4">
-              <div class="card-header">Default Prompts & Tool Access</div>
-              <div class="card-body">
-                <div class="row">
-                  <div class="col-md-6">
-                    <label class="form-label fw-semibold">Orchestrator System Prompt</label>
-                    <p class="text-muted small mb-2">Used by the main Catgirl loop. Defines personality and directs her to use tools.</p>
-                    <textarea class="form-control font-monospace text-muted mb-3" v-model="config.llm.default_system_prompt" rows="3"></textarea>
-
-                    <label class="form-label fw-semibold">Orchestrator Tools</label>
-                    <p class="text-muted small mb-2">Which tools the main orchestrator loop is allowed to use.</p>
-                    <div class="mb-4">
-                      <div class="form-check form-switch" v-for="tool in availableTools" :key="'orch_'+tool">
-                        <input class="form-check-input" type="checkbox" role="switch" :id="'orch_tool_'+tool" :value="tool" v-model="config.llm.default_orchestrator_tools">
-                        <label class="form-check-label font-monospace small" :for="'orch_tool_'+tool">{{ tool }}</label>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="col-md-6">
-                    <label class="form-label fw-semibold">Worker Agent Prompt</label>
-                    <p class="text-muted small mb-2">Defines behavior of sub-agents. Instructs them to use SET_STATE. %s is replaced by task.</p>
-                    <textarea class="form-control font-monospace text-muted mb-3" v-model="config.llm.default_agent_system_prompt" rows="3"></textarea>
-
-                    <label class="form-label fw-semibold">Agent Tools</label>
-                    <p class="text-muted small mb-2">Which tools the sub-agents are allowed to use to perform work.</p>
-                    <div class="mb-2">
-                      <div class="form-check form-switch" v-for="tool in availableTools" :key="'agent_'+tool">
-                        <input class="form-check-input" type="checkbox" role="switch" :id="'agent_tool_'+tool" :value="tool" v-model="config.llm.default_agent_tools">
-                        <label class="form-check-label font-monospace small" :for="'agent_tool_'+tool">{{ tool }}</label>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="card mb-4">
               <div class="card-header d-flex justify-content-between align-items-center">
-                <span>General Purpose LLM Providers</span>
-                <button class="btn btn-sm btn-primary" @click="addProvider('providers')">
-                  <i class="bi bi-plus"></i> Add Provider
-                </button>
-              </div>
-              <div class="card-body p-0">
-                <div class="table-responsive">
-                  <table class="table table-hover align-middle mb-0">
-                    <thead class="table-light">
-                      <tr>
-                        <th class="ps-4">Base URL</th>
-                        <th>API Key</th>
-                        <th>Models</th>
-                        <th class="text-end pe-4">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-if="!config.llm.providers || config.llm.providers.length === 0">
-                        <td colspan="4" class="text-center py-4 text-muted">No providers configured. Click "Add Provider" above.</td>
-                      </tr>
-                      <tr v-for="(provider, index) in config.llm.providers" :key="'gp'+index">
-                        <td class="ps-4">
-                          <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
-                        </td>
-                        <td>
-                          <div class="input-group input-group-sm">
-                            <span class="input-group-text"><i class="bi bi-key"></i></span>
-                            <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
-                          </div>
-                        </td>
-                        <td>
-                          <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
-                        </td>
-                        <td class="text-end pe-4">
-                          <button class="btn btn-sm btn-outline-danger" @click="config.llm.providers.splice(index, 1)" title="Remove Provider">
-                            <i class="bi bi-trash"></i>
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            <!-- Reasoner Providers -->
-            <div class="card mb-4">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <span>Reasoner LLM Providers</span>
-                <button class="btn btn-sm btn-primary" @click="addProvider('reasoner_providers')">
-                  <i class="bi bi-plus"></i> Add Provider
-                </button>
-              </div>
-              <div class="card-body p-0">
-                <div class="table-responsive">
-                  <table class="table table-hover align-middle mb-0">
-                    <thead class="table-light">
-                      <tr>
-                        <th class="ps-4">Base URL</th>
-                        <th>API Key</th>
-                        <th>Models</th>
-                        <th class="text-end pe-4">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-if="!config.llm.reasoner_providers || config.llm.reasoner_providers.length === 0">
-                        <td colspan="4" class="text-center py-4 text-muted">No reasoner providers configured.</td>
-                      </tr>
-                      <tr v-for="(provider, index) in config.llm.reasoner_providers" :key="'reasoner'+index">
-                        <td class="ps-4">
-                          <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
-                        </td>
-                        <td>
-                          <div class="input-group input-group-sm">
-                            <span class="input-group-text"><i class="bi bi-key"></i></span>
-                            <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
-                          </div>
-                        </td>
-                        <td>
-                          <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
-                        </td>
-                        <td class="text-end pe-4">
-                          <button class="btn btn-sm btn-outline-danger" @click="config.llm.reasoner_providers.splice(index, 1)" title="Remove Provider">
-                            <i class="bi bi-trash"></i>
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            <!-- Embedding Providers -->
-            <div class="card mb-4">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <span>Embedding LLM Providers</span>
-                <button class="btn btn-sm btn-primary" @click="addProvider('embedding_providers')">
+                <span>Global Embedding LLM Providers</span>
+                <button class="btn btn-sm btn-primary" @click="addGlobalProvider()">
                   <i class="bi bi-plus"></i> Add Provider
                 </button>
               </div>
@@ -272,9 +291,9 @@
                     </thead>
                     <tbody>
                       <tr v-if="!config.llm.embedding_providers || config.llm.embedding_providers.length === 0">
-                        <td colspan="4" class="text-center py-4 text-muted">No embedding providers configured.</td>
+                        <td colspan="4" class="text-center py-4 text-muted">No embedding providers configured. Click "Add Provider" above.</td>
                       </tr>
-                      <tr v-for="(provider, index) in config.llm.embedding_providers" :key="'embedding'+index">
+                      <tr v-for="(provider, index) in config.llm.embedding_providers" :key="'emb'+index">
                         <td class="ps-4">
                           <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
                         </td>
@@ -322,7 +341,7 @@
           <div v-if="activeTab === 'telegram'">
             <div class="card mb-4">
               <div class="card-header d-flex justify-content-between align-items-center">
-                <span>Telegram Bots & Session Overrides</span>
+                <span>Telegram Bots</span>
                 <button class="btn btn-sm btn-primary" @click="addBot()">
                   <i class="bi bi-plus"></i> Add Telegram Bot
                 </button>
@@ -340,7 +359,8 @@
                     </button>
                   </div>
                   <div class="card-body">
-                    <div class="row">
+                    <!-- Bot Basic Info -->
+                    <div class="row mb-4">
                       <div class="col-md-6 mb-3">
                         <label class="form-label fw-semibold">Bot API Token</label>
                         <div class="input-group input-group-sm">
@@ -357,61 +377,153 @@
                       </div>
                     </div>
 
-                    <div class="accordion" :id="'botAccordion'+index">
-                      <div class="accordion-item">
-                        <h2 class="accordion-header">
-                          <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" :data-bs-target="'#collapse'+index">
-                            Session Overrides (Prompts, Tools, Models)
-                          </button>
-                        </h2>
-                        <div :id="'collapse'+index" class="accordion-collapse collapse" :data-bs-parent="'#botAccordion'+index">
-                          <div class="accordion-body bg-light">
+                    <!-- AI Models Section -->
+                    <h5 class="border-bottom pb-2 mb-3">AI Models</h5>
 
-                            <div class="row mb-3">
-                              <div class="col-md-6">
-                                <label class="form-label fw-semibold small mb-1">Orchestrator System Prompt (Override)</label>
-                                <textarea class="form-control font-monospace small text-muted mb-2" v-model="bot.orchestrator_system_prompt" rows="2" placeholder="Leave blank to use default"></textarea>
-
-                                <label class="form-label fw-semibold small mb-1">Allowed Orchestrator Tools</label>
-                                <div class="mb-2">
-                                  <div class="form-check form-switch" v-for="tool in availableTools" :key="'bot_orch_'+index+'_'+tool">
-                                    <input class="form-check-input" type="checkbox" role="switch" :id="'bot_orch_'+index+'_'+tool" :value="tool" v-model="bot.allowed_orchestrator_tools">
-                                    <label class="form-check-label font-monospace small" :for="'bot_orch_'+index+'_'+tool">{{ tool }}</label>
+                    <!-- GP Providers -->
+                    <div class="card mb-3 bg-light">
+                      <div class="card-header d-flex justify-content-between align-items-center py-2">
+                        <span class="fw-semibold">General Purpose LLM Providers</span>
+                        <button class="btn btn-sm btn-outline-primary" @click="addProvider(bot, 'providers')">
+                          <i class="bi bi-plus"></i> Add Provider
+                        </button>
+                      </div>
+                      <div class="card-body p-0">
+                        <div class="table-responsive">
+                          <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                              <tr>
+                                <th class="ps-4">Base URL</th>
+                                <th>API Key</th>
+                                <th>Models</th>
+                                <th class="text-end pe-4">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-if="!bot.providers || bot.providers.length === 0">
+                                <td colspan="4" class="text-center py-3 text-muted">No providers configured.</td>
+                              </tr>
+                              <tr v-for="(provider, pIndex) in bot.providers" :key="'gp'+pIndex">
+                                <td class="ps-4">
+                                  <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
+                                </td>
+                                <td>
+                                  <div class="input-group input-group-sm">
+                                    <span class="input-group-text"><i class="bi bi-key"></i></span>
+                                    <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
                                   </div>
-                                </div>
-                              </div>
-
-                              <div class="col-md-6">
-                                <label class="form-label fw-semibold small mb-1">Agent System Prompt (Override)</label>
-                                <textarea class="form-control font-monospace small text-muted mb-2" v-model="bot.agent_system_prompt" rows="2" placeholder="Leave blank to use default"></textarea>
-
-                                <label class="form-label fw-semibold small mb-1">Allowed Agent Tools</label>
-                                <div class="mb-2">
-                                  <div class="form-check form-switch" v-for="tool in availableTools" :key="'bot_agent_'+index+'_'+tool">
-                                    <input class="form-check-input" type="checkbox" role="switch" :id="'bot_agent_'+index+'_'+tool" :value="tool" v-model="bot.allowed_agent_tools">
-                                    <label class="form-check-label font-monospace small" :for="'bot_agent_'+index+'_'+tool">{{ tool }}</label>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div class="row">
-                              <div class="col-md-6">
-                                <label class="form-label fw-semibold small mb-1">Pin GP Model</label>
-                                <input type="text" class="form-control form-control-sm" v-model="bot.gp_model" placeholder="eg. claude-3-opus-20240229">
-                                <div class="form-text" style="font-size: 0.7rem">Forces all tasks in this session to use this specific model.</div>
-                              </div>
-                              <div class="col-md-6">
-                                <label class="form-label fw-semibold small mb-1">Pin Reasoner Model</label>
-                                <input type="text" class="form-control form-control-sm" v-model="bot.reasoner_model" placeholder="eg. gpt-4-turbo">
-                              </div>
-                            </div>
-
-                          </div>
+                                </td>
+                                <td>
+                                  <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4o, claude-3">
+                                </td>
+                                <td class="text-end pe-4">
+                                  <button class="btn btn-sm btn-outline-danger" @click="bot.providers.splice(pIndex, 1)" title="Remove Provider">
+                                    <i class="bi bi-trash"></i>
+                                  </button>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
                         </div>
                       </div>
                     </div>
 
+                    <!-- Reasoner Providers -->
+                    <div class="card mb-3 bg-light">
+                      <div class="card-header d-flex justify-content-between align-items-center py-2">
+                        <span class="fw-semibold">Reasoner LLM Providers</span>
+                        <button class="btn btn-sm btn-outline-primary" @click="addProvider(bot, 'reasoner_providers')">
+                          <i class="bi bi-plus"></i> Add Provider
+                        </button>
+                      </div>
+                      <div class="card-body p-0">
+                        <div class="table-responsive">
+                          <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                              <tr>
+                                <th class="ps-4">Base URL</th>
+                                <th>API Key</th>
+                                <th>Models</th>
+                                <th class="text-end pe-4">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-if="!bot.reasoner_providers || bot.reasoner_providers.length === 0">
+                                <td colspan="4" class="text-center py-3 text-muted">No reasoner providers configured.</td>
+                              </tr>
+                              <tr v-for="(provider, pIndex) in bot.reasoner_providers" :key="'reasoner'+pIndex">
+                                <td class="ps-4">
+                                  <input type="text" class="form-control form-control-sm" v-model="provider.base_url" placeholder="https://api.openai.com/v1">
+                                </td>
+                                <td>
+                                  <div class="input-group input-group-sm">
+                                    <span class="input-group-text"><i class="bi bi-key"></i></span>
+                                    <input type="password" class="form-control" v-model="provider.api_key" placeholder="sk-...">
+                                  </div>
+                                </td>
+                                <td>
+                                  <input type="text" class="form-control form-control-sm" :value="provider.models ? provider.models.join(', ') : ''" @input="e => updateModels(provider, (e.target as HTMLInputElement).value)" placeholder="gpt-4-turbo">
+                                </td>
+                                <td class="text-end pe-4">
+                                  <button class="btn btn-sm btn-outline-danger" @click="bot.reasoner_providers.splice(pIndex, 1)" title="Remove Provider">
+                                    <i class="bi bi-trash"></i>
+                                  </button>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Model Selection -->
+                    <div class="row mb-4">
+                      <div class="col-md-6">
+                        <label class="form-label fw-semibold">Pin GP Model</label>
+                        <input type="text" class="form-control" v-model="bot.gp_model" placeholder="eg. claude-3-opus-20240229">
+                        <div class="form-text" style="font-size: 0.7rem">Leave blank to use random model from providers.</div>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label fw-semibold">Pin Reasoner Model</label>
+                        <input type="text" class="form-control" v-model="bot.reasoner_model" placeholder="eg. gpt-4-turbo">
+                        <div class="form-text" style="font-size: 0.7rem">Leave blank to use random model from reasoner providers.</div>
+                      </div>
+                    </div>
+
+                    <!-- Prompts & Tools Section -->
+                    <h5 class="border-bottom pb-2 mb-3">Prompts & Tools</h5>
+
+                    <div class="row">
+                      <div class="col-md-6">
+                        <label class="form-label fw-semibold">Orchestrator System Prompt</label>
+                        <p class="text-muted small mb-2">Defines personality and directs the agent to use tools.</p>
+                        <textarea class="form-control font-monospace text-muted mb-3" v-model="bot.orchestrator_system_prompt" rows="3" placeholder="You are an autonomous agent..."></textarea>
+
+                        <label class="form-label fw-semibold">Allowed Orchestrator Tools</label>
+                        <p class="text-muted small mb-2">Tools the main orchestrator loop is allowed to use.</p>
+                        <div class="mb-3">
+                          <div class="form-check form-switch" v-for="tool in availableTools" :key="'orch_'+tool">
+                            <input class="form-check-input" type="checkbox" role="switch" :id="'orch_tool_'+index+'_'+tool" :value="tool" v-model="bot.allowed_orchestrator_tools">
+                            <label class="form-check-label font-monospace small" :for="'orch_tool_'+index+'_'+tool">{{ tool }}</label>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="col-md-6">
+                        <label class="form-label fw-semibold">Worker Agent Prompt</label>
+                        <p class="text-muted small mb-2">Defines behavior of sub-agents. %s is replaced by task.</p>
+                        <textarea class="form-control font-monospace text-muted mb-3" v-model="bot.agent_system_prompt" rows="3" placeholder="You are a worker agent..."></textarea>
+
+                        <label class="form-label fw-semibold">Allowed Agent Tools</label>
+                        <p class="text-muted small mb-2">Tools the sub-agents are allowed to use.</p>
+                        <div class="mb-3">
+                          <div class="form-check form-switch" v-for="tool in availableTools" :key="'agent_'+tool">
+                            <input class="form-check-input" type="checkbox" role="switch" :id="'agent_tool_'+index+'_'+tool" :value="tool" v-model="bot.allowed_agent_tools">
+                            <label class="form-check-label font-monospace small" :for="'agent_tool_'+index+'_'+tool">{{ tool }}</label>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -427,7 +539,6 @@
                 </div>
               </div>
             </div>
-
           </div>
 
           <!-- POOL TAB -->
@@ -511,6 +622,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 
 const config = ref<any>(null)
 const health = ref<any>(null)
+const sessions = ref<any[]>([])
 const saving = ref(false)
 const activeTab = ref('dashboard')
 
@@ -528,6 +640,28 @@ const showToast = (id: string) => {
 
 let healthInterval: any;
 
+// Helper functions
+const formatNumber = (num: any): string => {
+  if (num === null || num === undefined) return '0'
+  return Number(num).toLocaleString()
+}
+
+const formatDate = (dateStr: string): string => {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+}
+
+const fetchSessions = async () => {
+  try {
+    const res = await fetch('/api/v1/sessions')
+    const data = await res.json()
+    sessions.value = data.sessions || []
+  } catch (err) {
+    console.error('Failed to fetch sessions', err)
+  }
+}
+
 const fetchConfig = async () => {
   try {
     const res = await fetch('/api/v1/config')
@@ -535,17 +669,23 @@ const fetchConfig = async () => {
     config.value = data.config
 
     // Ensure nested arrays exist so UI doesn't crash
-    if (!config.value.llm.providers) config.value.llm.providers = []
-    if (!config.value.llm.reasoner_providers) config.value.llm.reasoner_providers = []
+    if (!config.value.llm) config.value.llm = {}
     if (!config.value.llm.embedding_providers) config.value.llm.embedding_providers = []
-    if (!config.value.llm.default_orchestrator_tools) config.value.llm.default_orchestrator_tools = []
-    if (!config.value.llm.default_agent_tools) config.value.llm.default_agent_tools = []
+    if (!config.value.telegram) config.value.telegram = { bots: [], listen_addr: '' }
     if (!config.value.telegram.bots) config.value.telegram.bots = []
+    if (!config.value.global) config.value.global = {}
+    if (!config.value.agent_pool) config.value.agent_pool = {}
 
-    // Ensure each bot has array references
+    // Ensure each bot has all required properties
     config.value.telegram.bots.forEach((bot: any) => {
+      if (!bot.providers) bot.providers = []
+      if (!bot.reasoner_providers) bot.reasoner_providers = []
       if (!bot.allowed_orchestrator_tools) bot.allowed_orchestrator_tools = []
       if (!bot.allowed_agent_tools) bot.allowed_agent_tools = []
+      if (!bot.orchestrator_system_prompt) bot.orchestrator_system_prompt = ''
+      if (!bot.agent_system_prompt) bot.agent_system_prompt = ''
+      if (!bot.gp_model) bot.gp_model = ''
+      if (!bot.reasoner_model) bot.reasoner_model = ''
     })
 
   } catch (err) {
@@ -592,6 +732,8 @@ const addBot = () => {
   config.value.telegram.bots.push({
     bot_token: '',
     webhook_url: '',
+    providers: [],
+    reasoner_providers: [],
     orchestrator_system_prompt: '',
     agent_system_prompt: '',
     allowed_orchestrator_tools: [],
@@ -600,18 +742,30 @@ const addBot = () => {
     reasoner_model: ''
   })
 }
+
 const updateModels = (provider: any, val: string) => {
-  provider.models = val.split(',').map(s => s.trim()).filter(s => s.length > 0)
+  provider.models = val.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
 }
 
-const addProvider = (listName: 'providers' | 'reasoner_providers' | 'embedding_providers') => {
-  if (!config.value.llm[listName]) {
-    config.value.llm[listName] = []
+const addProvider = (bot: any, listName: string) => {
+  if (!bot[listName]) {
+    bot[listName] = []
   }
-  config.value.llm[listName].push({
+  bot[listName].push({
     base_url: 'https://api.openai.com/v1',
     api_key: '',
     models: ['gpt-4o']
+  })
+}
+
+const addGlobalProvider = () => {
+  if (!config.value.llm.embedding_providers) {
+    config.value.llm.embedding_providers = []
+  }
+  config.value.llm.embedding_providers.push({
+    base_url: 'https://api.openai.com/v1',
+    api_key: '',
+    models: ['text-embedding-3-large']
   })
 }
 
@@ -628,6 +782,7 @@ const fetchTools = async () => {
 onMounted(() => {
   fetchConfig()
   fetchHealth()
+  fetchSessions()
   fetchTools()
   healthInterval = setInterval(fetchHealth, 5000)
 })

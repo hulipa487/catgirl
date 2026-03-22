@@ -30,8 +30,6 @@ func (r *Repository) Ping(ctx context.Context) map[string]interface{} {
 func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfig, error) {
 	// First, fetch the singleton system_config row
 	var maxTaskDepth, maxQueueSize, embeddingDims, maxTokens, timeoutSecs int
-	var defaultSystemPrompt, defaultAgentSystemPrompt string
-	var defaultOrchestratorToolsJSON, defaultAgentToolsJSON json.RawMessage
 	var minAgents, maxAgents, idleTimeoutSecs int
 	var snapshotEnabled bool
 	var snapshotStoragePath, snapshotRetCompleted, snapshotRetFailed, snapshotRetExited, snapshotRetInterrupted string
@@ -50,7 +48,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	err := r.db.Pool.QueryRow(ctx, `
 		SELECT
 			max_task_depth, max_queue_size,
-			embedding_dims, max_tokens, timeout_seconds, system_prompt, agent_system_prompt, default_orchestrator_tools, default_agent_tools,
+			embedding_dims, max_tokens, timeout_seconds,
 			min_agents, max_agents, idle_timeout_seconds,
 			snapshot_enabled, snapshot_storage_path, snapshot_max_storage_bytes,
 			snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
@@ -61,7 +59,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		FROM system_config WHERE id = 1
 	`).Scan(
 		&maxTaskDepth, &maxQueueSize,
-		&embeddingDims, &maxTokens, &timeoutSecs, &defaultSystemPrompt, &defaultAgentSystemPrompt, &defaultOrchestratorToolsJSON, &defaultAgentToolsJSON,
+		&embeddingDims, &maxTokens, &timeoutSecs,
 		&minAgents, &maxAgents, &idleTimeoutSecs,
 		&snapshotEnabled, &snapshotStoragePath, &snapshotMaxStorageBytes,
 		&snapshotRetCompleted, &snapshotRetFailed, &snapshotRetExited, &snapshotRetInterrupted,
@@ -77,14 +75,14 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		return nil, fmt.Errorf("failed to fetch system_config: %w", err)
 	}
 
-	// Fetch Providers
-	rows, err := r.db.Pool.Query(ctx, `SELECT provider_type, base_url, api_key, models FROM llm_providers`)
+	// Fetch Embedding Providers only (GP and Reasoner are per-bot in telegram_bots JSON)
+	rows, err := r.db.Pool.Query(ctx, `SELECT provider_type, base_url, api_key, models FROM llm_providers WHERE provider_type = 'embedding'`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch llm_providers: %w", err)
 	}
 	defer rows.Close()
 
-	var gpProviders, reasonerProviders, embeddingProviders []config.ModelProviderConfig
+	var embeddingProviders []config.ModelProviderConfig
 	for rows.Next() {
 		var pType, baseURL, apiKey string
 		var modelsJSON json.RawMessage
@@ -94,23 +92,11 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		var modelsList []string
 		_ = json.Unmarshal(modelsJSON, &modelsList)
 		provider := config.ModelProviderConfig{BaseURL: baseURL, APIKey: apiKey, Models: modelsList}
-
-		switch pType {
-		case "gp":
-			gpProviders = append(gpProviders, provider)
-		case "reasoner":
-			reasonerProviders = append(reasonerProviders, provider)
-		case "embedding":
-			embeddingProviders = append(embeddingProviders, provider)
-		}
+		embeddingProviders = append(embeddingProviders, provider)
 	}
 
 	var allowedMemberships []string
 	_ = json.Unmarshal(authAllowedMemberships, &allowedMemberships)
-
-	var defaultOrchestratorTools, defaultAgentTools []string
-	_ = json.Unmarshal(defaultOrchestratorToolsJSON, &defaultOrchestratorTools)
-	_ = json.Unmarshal(defaultAgentToolsJSON, &defaultAgentTools)
 
 	var telegramBots []config.TelegramBotConfig
 	_ = json.Unmarshal(telegramBotsJSON, &telegramBots)
@@ -118,16 +104,10 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	return &config.RuntimeConfig{
 		Global: config.GlobalConfig{MaxTaskDepth: maxTaskDepth, MaxQueueSize: maxQueueSize},
 		LLM: config.LLMConfig{
-			Providers:                gpProviders,
-			ReasonerProviders:        reasonerProviders,
-			EmbeddingProviders:       embeddingProviders,
-			EmbeddingDims:            embeddingDims,
-			MaxTokens:                maxTokens,
-			TimeoutSecs:              timeoutSecs,
-			DefaultSystemPrompt:      defaultSystemPrompt,
-			DefaultAgentSystemPrompt: defaultAgentSystemPrompt,
-			DefaultOrchestratorTools: defaultOrchestratorTools,
-			DefaultAgentTools:        defaultAgentTools,
+			EmbeddingProviders: embeddingProviders,
+			EmbeddingDims:     embeddingDims,
+			MaxTokens:         maxTokens,
+			TimeoutSecs:       timeoutSecs,
 		},
 		AgentPool: config.AgentPoolConfig{MinAgents: minAgents, MaxAgents: maxAgents, IdleTimeoutSecs: idleTimeoutSecs},
 		Snapshot: config.SnapshotConfig{
@@ -224,7 +204,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		return fmt.Errorf("failed to upsert system config: %w", err)
 	}
 
-	// Sync Providers (Replace all strategy for simplicity)
+	// Sync Embedding Providers only (GP and Reasoner are per-bot in telegram_bots JSON)
 	_, err = tx.Exec(ctx, `DELETE FROM llm_providers`)
 	if err != nil {
 		return fmt.Errorf("failed to clear llm_providers: %w", err)
@@ -239,16 +219,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		return err
 	}
 
-	for _, p := range cfg.LLM.Providers {
-		if err := insertProvider("gp", p); err != nil {
-			return err
-		}
-	}
-	for _, p := range cfg.LLM.ReasonerProviders {
-		if err := insertProvider("reasoner", p); err != nil {
-			return err
-		}
-	}
+	// Only sync embedding providers - GP and Reasoner are per-bot
 	for _, p := range cfg.LLM.EmbeddingProviders {
 		if err := insertProvider("embedding", p); err != nil {
 			return err
@@ -823,6 +794,104 @@ func (r *Repository) GetUsageSummaryBySession(ctx context.Context, sessionID uui
 		"total_effective_tokens": totalEffective,
 		"record_count":           recordCount,
 	}, nil
+}
+
+func (r *Repository) GetGlobalUsageSummary(ctx context.Context) (map[string]interface{}, error) {
+	row := r.db.Pool.QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(input_tokens), 0) as total_input,
+			COALESCE(SUM(output_tokens), 0) as total_output,
+			COALESCE(SUM(total_tokens), 0) as total_tokens,
+			COALESCE(SUM(effective_tokens), 0) as total_effective,
+			COUNT(*) as record_count
+		FROM usage_records
+	`)
+
+	var totalInput, totalOutput, totalTokens, totalEffective int
+	var recordCount int
+	if err := row.Scan(&totalInput, &totalOutput, &totalTokens, &totalEffective, &recordCount); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"total_input_tokens":     totalInput,
+		"total_output_tokens":    totalOutput,
+		"total_tokens":           totalTokens,
+		"total_effective_tokens": totalEffective,
+		"record_count":           recordCount,
+	}, nil
+}
+
+func (r *Repository) GetUsageSummaryByModel(ctx context.Context) ([]map[string]interface{}, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT
+			COALESCE(operation_name, 'unknown') as model,
+			COALESCE(SUM(input_tokens), 0) as total_input,
+			COALESCE(SUM(output_tokens), 0) as total_output,
+			COALESCE(SUM(total_tokens), 0) as total_tokens,
+			COUNT(*) as request_count
+		FROM usage_records
+		GROUP BY operation_name
+		ORDER BY total_tokens DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var model string
+		var totalInput, totalOutput, totalTokens, requestCount int
+		if err := rows.Scan(&model, &totalInput, &totalOutput, &totalTokens, &requestCount); err != nil {
+			return nil, err
+		}
+		results = append(results, map[string]interface{}{
+			"model":           model,
+			"input_tokens":   totalInput,
+			"output_tokens":  totalOutput,
+			"total_tokens":   totalTokens,
+			"request_count":   requestCount,
+		})
+	}
+	return results, nil
+}
+
+func (r *Repository) GetUsageSummaryByTelegramUser(ctx context.Context) ([]map[string]interface{}, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT
+			tu.telegram_user_id,
+			COALESCE(SUM(ur.input_tokens), 0) as total_input,
+			COALESCE(SUM(ur.output_tokens), 0) as total_output,
+			COALESCE(SUM(ur.total_tokens), 0) as total_tokens,
+			COUNT(ur.usage_id) as request_count
+		FROM telegram_users tu
+		LEFT JOIN sessions s ON tu.session_id = s.id
+		LEFT JOIN usage_records ur ON s.id = ur.session_id
+		GROUP BY tu.telegram_user_id
+		ORDER BY total_tokens DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var telegramUserID int64
+		var totalInput, totalOutput, totalTokens, requestCount int
+		if err := rows.Scan(&telegramUserID, &totalInput, &totalOutput, &totalTokens, &requestCount); err != nil {
+			return nil, err
+		}
+		results = append(results, map[string]interface{}{
+			"telegram_user_id": telegramUserID,
+			"input_tokens":     totalInput,
+			"output_tokens":    totalOutput,
+			"total_tokens":    totalTokens,
+			"request_count":   requestCount,
+		})
+	}
+	return results, nil
 }
 
 // Task Owner Channel Repository

@@ -262,12 +262,12 @@ func (s *LLMService) GetRandomModel(providers []config.ModelProviderConfig, pref
 	}
 }
 
-func (s *LLMService) GetRandomGPModel(preferred string) ModelConfig {
-	return s.GetRandomModel(s.config.Providers, preferred)
+func (s *LLMService) GetRandomGPModel(preferred string, providers []config.ModelProviderConfig) ModelConfig {
+	return s.GetRandomModel(providers, preferred)
 }
 
-func (s *LLMService) GetRandomReasonerModel(preferred string) ModelConfig {
-	return s.GetRandomModel(s.config.ReasonerProviders, preferred)
+func (s *LLMService) GetRandomReasonerModel(preferred string, providers []config.ModelProviderConfig) ModelConfig {
+	return s.GetRandomModel(providers, preferred)
 }
 
 func (s *LLMService) GetRandomEmbeddingModel(preferred string) ModelConfig {

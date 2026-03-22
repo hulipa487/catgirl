@@ -61,18 +61,10 @@ type ModelProviderConfig struct {
 }
 
 type LLMConfig struct {
-	Providers          []ModelProviderConfig `mapstructure:"providers" json:"providers"`
-	ReasonerProviders  []ModelProviderConfig `mapstructure:"reasoner_providers" json:"reasoner_providers"`
 	EmbeddingProviders []ModelProviderConfig `mapstructure:"embedding_providers" json:"embedding_providers"`
-	EmbeddingDims      int                   `mapstructure:"embedding_dims" json:"embedding_dims"`
-	MaxTokens          int                   `mapstructure:"max_tokens" json:"max_tokens"`
-	TimeoutSecs        int                   `mapstructure:"timeout_seconds" json:"timeout_seconds"`
-
-	// Session Defaults
-	DefaultSystemPrompt      string   `mapstructure:"default_system_prompt" json:"default_system_prompt"`
-	DefaultAgentSystemPrompt string   `mapstructure:"default_agent_system_prompt" json:"default_agent_system_prompt"`
-	DefaultOrchestratorTools []string `mapstructure:"default_orchestrator_tools" json:"default_orchestrator_tools"`
-	DefaultAgentTools        []string `mapstructure:"default_agent_tools" json:"default_agent_tools"`
+	EmbeddingDims     int                   `mapstructure:"embedding_dims" json:"embedding_dims"`
+	MaxTokens         int                   `mapstructure:"max_tokens" json:"max_tokens"`
+	TimeoutSecs       int                   `mapstructure:"timeout_seconds" json:"timeout_seconds"`
 }
 
 type AgentPoolConfig struct {
@@ -96,14 +88,24 @@ type RetentionConfig struct {
 }
 
 type TelegramBotConfig struct {
-	BotToken                 string   `mapstructure:"bot_token" json:"bot_token"`
-	WebhookURL               string   `mapstructure:"webhook_url" json:"webhook_url"`
-	OrchestratorSystemPrompt string   `mapstructure:"orchestrator_system_prompt" json:"orchestrator_system_prompt"`
-	AgentSystemPrompt        string   `mapstructure:"agent_system_prompt" json:"agent_system_prompt"`
+	BotToken   string `mapstructure:"bot_token" json:"bot_token"`
+	WebhookURL string `mapstructure:"webhook_url" json:"webhook_url"`
+
+	// LLM Providers (per bot)
+	Providers         []ModelProviderConfig `mapstructure:"providers" json:"providers"`
+	ReasonerProviders []ModelProviderConfig `mapstructure:"reasoner_providers" json:"reasoner_providers"`
+
+	// Prompts (per bot)
+	OrchestratorSystemPrompt string `mapstructure:"orchestrator_system_prompt" json:"orchestrator_system_prompt"`
+	AgentSystemPrompt       string `mapstructure:"agent_system_prompt" json:"agent_system_prompt"`
+
+	// Tools (per bot)
 	AllowedOrchestratorTools []string `mapstructure:"allowed_orchestrator_tools" json:"allowed_orchestrator_tools"`
-	AllowedAgentTools        []string `mapstructure:"allowed_agent_tools" json:"allowed_agent_tools"`
-	GPModel                  string   `mapstructure:"gp_model" json:"gp_model"`
-	ReasonerModel            string   `mapstructure:"reasoner_model" json:"reasoner_model"`
+	AllowedAgentTools       []string `mapstructure:"allowed_agent_tools" json:"allowed_agent_tools"`
+
+	// Model selection (per bot)
+	GPModel       string `mapstructure:"gp_model" json:"gp_model"`
+	ReasonerModel string `mapstructure:"reasoner_model" json:"reasoner_model"`
 }
 
 type TelegramConfig struct {
@@ -208,34 +210,31 @@ func (c *Config) Validate() error {
 }
 
 func (c *RuntimeConfig) Validate() error {
-	if len(c.LLM.Providers) == 0 {
-		return fmt.Errorf("at least one llm.providers entry is required")
-	}
-	for i, p := range c.LLM.Providers {
-		if len(p.Models) == 0 {
-			return fmt.Errorf("llm.providers[%d] requires at least one model", i)
-		}
-	}
-	// Note: reasoner_providers is optional, but if specified, must have at least one model
-	for i, p := range c.LLM.ReasonerProviders {
-		if len(p.Models) == 0 {
-			return fmt.Errorf("llm.reasoner_providers[%d] requires at least one model", i)
-		}
-	}
+	// Validate global embedding providers
 	if len(c.LLM.EmbeddingProviders) == 0 {
-		return fmt.Errorf("at least one llm.embedding_providers entry is required")
+		return fmt.Errorf("at least one embedding_providers entry is required")
 	}
 	for i, p := range c.LLM.EmbeddingProviders {
 		if len(p.Models) == 0 {
-			return fmt.Errorf("llm.embedding_providers[%d] requires at least one model", i)
+			return fmt.Errorf("embedding_providers[%d] requires at least one model", i)
 		}
 	}
+
 	for i, b := range c.Telegram.Bots {
 		if b.BotToken == "" {
 			return fmt.Errorf("telegram.bots[%d].bot_token is required", i)
 		}
 		if b.WebhookURL == "" {
 			return fmt.Errorf("telegram.bots[%d].webhook_url is required", i)
+		}
+		// Validate per-bot LLM providers
+		if len(b.Providers) == 0 {
+			return fmt.Errorf("telegram.bots[%d].providers is required", i)
+		}
+		for j, p := range b.Providers {
+			if len(p.Models) == 0 {
+				return fmt.Errorf("telegram.bots[%d].providers[%d] requires at least one model", i, j)
+			}
 		}
 	}
 	if c.Global.MaxTaskDepth == 0 {
