@@ -364,7 +364,7 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 		}
 
 		// Call LLM
-		var model llm.ModelConfig
+		var model config.ModelConfig
 		if taskInstance.AgentType == models.AgentTypeReasoner {
 			model = rc.llmSvc.GetRandomReasonerModel(botConfig.ReasonerModel)
 		} else {

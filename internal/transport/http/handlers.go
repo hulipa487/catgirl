@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/hulipa487/catgirl/internal/config"
-	"github.com/hulipa487/catgirl/internal/models"
 	"github.com/hulipa487/catgirl/internal/runtime"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -160,7 +159,7 @@ func (h *Handlers) UpdateSessionSettings(c *gin.Context) {
 		return
 	}
 
-	// session.Settings = newSettings
+	session.Settings = newSettings
 	if err := repo.UpdateSession(ctx, session); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session: " + err.Error()})
 		return
