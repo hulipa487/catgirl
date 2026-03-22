@@ -229,8 +229,6 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 	for {
 		message := <-session.InputQueue
 
-		ctx := context.Background()
-
 		// Wait a brief moment to ensure DB transaction finishes
 		time.Sleep(100 * time.Millisecond)
 
