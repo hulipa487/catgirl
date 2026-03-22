@@ -19,7 +19,7 @@ import (
 
 type SessionService struct {
 	repo        *repository.Repository
-	config      *config.Config
+	config      *config.RuntimeConfig
 	logger      zerolog.Logger
 	llmSvc      *llm.LLMService
 	taskService *task.TaskService
@@ -48,7 +48,7 @@ type Session struct {
 type LongTermMemoryManager struct {
 	sessionID uuid.UUID
 	repo     *repository.Repository
-	cfg      *config.Config
+	cfg      *config.RuntimeConfig
 	logger   zerolog.Logger
 }
 
@@ -60,7 +60,7 @@ type ConversationHistoryManager struct {
 	cfg          *config.ContextConfig
 }
 
-func NewSessionService(repo *repository.Repository, cfg *config.Config, logger zerolog.Logger, llmSvc *llm.LLMService, taskSvc *task.TaskService) *SessionService {
+func NewSessionService(repo *repository.Repository, cfg *config.RuntimeConfig, logger zerolog.Logger, llmSvc *llm.LLMService, taskSvc *task.TaskService) *SessionService {
 	return &SessionService{
 		repo:        repo,
 		config:      cfg,
@@ -502,7 +502,7 @@ func (s *SessionService) GetConversationHistory(ctx context.Context, sessionID u
 	return s.repo.GetConversationHistory(ctx, sessionID, limit, offset)
 }
 
-func NewLongTermMemoryManager(sessionID uuid.UUID, repo *repository.Repository, cfg *config.Config, logger zerolog.Logger) *LongTermMemoryManager {
+func NewLongTermMemoryManager(sessionID uuid.UUID, repo *repository.Repository, cfg *config.RuntimeConfig, logger zerolog.Logger) *LongTermMemoryManager {
 	return &LongTermMemoryManager{
 		sessionID: sessionID,
 		repo:      repo,
