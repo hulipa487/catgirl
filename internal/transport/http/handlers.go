@@ -173,55 +173,6 @@ func (h *Handlers) ListSnapshots(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"snapshots": snapshots})
 }
 
-func (h *Handlers) ListSkills(c *gin.Context) {
-	ctx := c.Request.Context()
-	repo := h.runtime.GetRepository()
-
-	sessionIDStr := c.Query("session_id")
-	if sessionIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
-		return
-	}
-
-	sessionID, err := uuid.Parse(sessionIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id"})
-		return
-	}
-
-	skills, err := repo.ListSkillsBySession(ctx, sessionID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"skills": skills})
-}
-
-func (h *Handlers) ListMCPServers(c *gin.Context) {
-	ctx := c.Request.Context()
-	repo := h.runtime.GetRepository()
-
-	sessionIDStr := c.Query("session_id")
-	if sessionIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
-		return
-	}
-
-	sessionID, err := uuid.Parse(sessionIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id"})
-		return
-	}
-
-	servers, err := repo.ListMCPServersBySession(ctx, sessionID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"servers": servers})
-}
 
 func (h *Handlers) GetUsageSummary(c *gin.Context) {
 	ctx := c.Request.Context()

@@ -39,8 +39,6 @@ func NewServer(rt *runtime.RuntimeCoordinator, cfg *config.Config, logger zerolo
 	apiRouter.GET("/api/v1/agents", handlers.ListAgents)
 	apiRouter.GET("/api/v1/agents/pool/status", handlers.GetAgentPoolStatus)
 	apiRouter.GET("/api/v1/snapshots", handlers.ListSnapshots)
-	apiRouter.GET("/api/v1/skills", handlers.ListSkills)
-	apiRouter.GET("/api/v1/mcp/servers", handlers.ListMCPServers)
 	apiRouter.GET("/api/v1/usage/summary", handlers.GetUsageSummary)
 	apiRouter.GET("/api/v1/memory/search", handlers.SearchMemory)
 	apiRouter.GET("/api/v1/metrics", handlers.GetSystemMetrics)

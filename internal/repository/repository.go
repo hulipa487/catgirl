@@ -612,6 +612,60 @@ func (r *Repository) DeleteSkill(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+// MCP Server Repository
+
+func (r *Repository) CreateMCPServer(ctx context.Context, s *models.MCPServer) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		INSERT INTO mcp_servers (id, session_id, name, connection_type, connection_string, command, status, tools, created_by_agent_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, s.ID, s.SessionID, s.Name, s.ConnectionType, s.ConnectionString, s.Command, s.Status, s.Tools, s.CreatedByAgentID, s.CreatedAt)
+	return err
+}
+
+func (r *Repository) GetMCPServer(ctx context.Context, id uuid.UUID) (*models.MCPServer, error) {
+	var s models.MCPServer
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT id, session_id, name, connection_type, connection_string, command, status, tools, created_by_agent_id, created_at
+		FROM mcp_servers WHERE id = $1
+	`, id).Scan(&s.ID, &s.SessionID, &s.Name, &s.ConnectionType, &s.ConnectionString, &s.Command, &s.Status, &s.Tools, &s.CreatedByAgentID, &s.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return &s, err
+}
+
+func (r *Repository) ListMCPServersBySession(ctx context.Context, sessionID uuid.UUID) ([]*models.MCPServer, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT id, session_id, name, connection_type, connection_string, command, status, tools, created_by_agent_id, created_at
+		FROM mcp_servers WHERE session_id = $1
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var servers []*models.MCPServer
+	for rows.Next() {
+		var s models.MCPServer
+		if err := rows.Scan(&s.ID, &s.SessionID, &s.Name, &s.ConnectionType, &s.ConnectionString, &s.Command, &s.Status, &s.Tools, &s.CreatedByAgentID, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		servers = append(servers, &s)
+	}
+	return servers, nil
+}
+
+func (r *Repository) UpdateMCPServer(ctx context.Context, s *models.MCPServer) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		UPDATE mcp_servers SET status = $2, tools = $3 WHERE id = $1
+	`, s.ID, s.Status, s.Tools)
+	return err
+}
+
+func (r *Repository) DeleteMCPServer(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.Pool.Exec(ctx, `DELETE FROM mcp_servers WHERE id = $1`, id)
+	return err
+}
 
 // Usage Record Repository
 
