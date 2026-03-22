@@ -1,0 +1,17 @@
+{
+  "type": "function",
+  "function": {
+    "name": "SEND_PARENT",
+    "description": "Send a message to the parent task or orchestrator. Use this to report progress, ask questions, or send results to the calling agent.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "The message to send to the parent task or orchestrator"
+        }
+      },
+      "required": ["message"]
+    }
+  }
+}

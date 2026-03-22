@@ -44,6 +44,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	var ragDefaultTopK, ragAutoRetrieveTopK, ragAutoRetrieveMaxResults int
 	var ragMinSimilarity float64
 	var snapshotMaxStorageBytes int64
+	var toolsDir, dockerRegistry, dockerImage string
 
 	err := r.db.Pool.QueryRow(ctx, `
 		SELECT
@@ -55,7 +56,10 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 			telegram_bots, telegram_listen_addr,
 			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
 			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
-			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity
+			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity,
+			COALESCE(tools_dir, '/var/catgirl/tools'),
+			COALESCE(docker_registry, ''),
+			COALESCE(docker_image, 'catgirl-runtime:latest')
 		FROM system_config WHERE id = 1
 	`).Scan(
 		&maxTaskDepth, &maxQueueSize,
@@ -67,6 +71,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		&authJwtSecret, &authJwtIssuer, &authAllowedMemberships,
 		&contextMaxTokens, &contextCompactionThreshold, &contextPreserveRecentTurns, &contextCompactionAgentType,
 		&ragEnabled, &ragDefaultTopK, &ragAutoRetrieveEnabled, &ragAutoRetrieveOnLlmCall, &ragAutoRetrieveTopK, &ragAutoRetrieveMaxResults, &ragMinSimilarity,
+		&toolsDir, &dockerRegistry, &dockerImage,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -107,7 +112,13 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	_ = json.Unmarshal(telegramBotsJSON, &telegramBots)
 
 	return &config.RuntimeConfig{
-		Global: config.GlobalConfig{MaxTaskDepth: maxTaskDepth, MaxQueueSize: maxQueueSize},
+		Global: config.GlobalConfig{
+			MaxTaskDepth:   maxTaskDepth,
+			MaxQueueSize:   maxQueueSize,
+			ToolsDir:       toolsDir,
+			DockerRegistry: dockerRegistry,
+			DockerImage:    dockerImage,
+		},
 		LLM: config.LLMConfig{
 			Providers:          gpProviders,
 			EmbeddingProviders: embeddingProviders,
@@ -170,6 +181,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
 			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
 			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity,
+			tools_dir, docker_registry, docker_image,
 			updated_by, updated_at
 		) VALUES (
 			1, $1, $2,
@@ -180,7 +192,8 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			$18, $19, $20,
 			$21, $22, $23, $24,
 			$25, $26, $27, $28, $29, $30, $31,
-			$32, NOW()
+			$32, $33, $34,
+			$35, NOW()
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			max_task_depth = EXCLUDED.max_task_depth, max_queue_size = EXCLUDED.max_queue_size,
@@ -191,6 +204,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			auth_jwt_secret = EXCLUDED.auth_jwt_secret, auth_jwt_issuer = EXCLUDED.auth_jwt_issuer, auth_allowed_memberships = EXCLUDED.auth_allowed_memberships,
 			context_max_tokens = EXCLUDED.context_max_tokens, context_compaction_threshold = EXCLUDED.context_compaction_threshold, context_preserve_recent_turns = EXCLUDED.context_preserve_recent_turns, context_compaction_agent_type = EXCLUDED.context_compaction_agent_type,
 			rag_enabled = EXCLUDED.rag_enabled, rag_default_top_k = EXCLUDED.rag_default_top_k, rag_auto_retrieve_enabled = EXCLUDED.rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call = EXCLUDED.rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k = EXCLUDED.rag_auto_retrieve_top_k, rag_auto_retrieve_max_results = EXCLUDED.rag_auto_retrieve_max_results, rag_min_similarity = EXCLUDED.rag_min_similarity,
+			tools_dir = EXCLUDED.tools_dir, docker_registry = EXCLUDED.docker_registry, docker_image = EXCLUDED.docker_image,
 			updated_by = EXCLUDED.updated_by, updated_at = NOW()
 	`,
 		cfg.Global.MaxTaskDepth, cfg.Global.MaxQueueSize,
@@ -201,6 +215,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		"", "", "[]", // Auth fields no longer used - mtfpass URL is from config file
 		cfg.Context.MaxTokens, cfg.Context.CompactionThreshold, cfg.Context.PreserveRecentTurns, cfg.Context.CompactionAgentType,
 		cfg.RAG.Enabled, cfg.RAG.DefaultTopK, cfg.RAG.AutoRetrieve.Enabled, cfg.RAG.AutoRetrieve.OnLLMCall, cfg.RAG.AutoRetrieve.TopK, cfg.RAG.AutoRetrieve.MaxResults, cfg.RAG.MinSimilarity,
+		cfg.Global.ToolsDir, cfg.Global.DockerRegistry, cfg.Global.DockerImage,
 		updatedBy,
 	)
 	if err != nil {
@@ -1148,5 +1163,99 @@ func (r *Repository) CreateTool(ctx context.Context, t *models.Tool) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (name) DO UPDATE SET description = $3, parameters = $4, updated_at = NOW()
 	`, t.ID, t.Name, t.Description, t.Parameters, t.IsActive, t.CreatedAt, t.UpdatedAt)
+	return err
+}
+
+// Task Instance Turn Repository (Worker Context)
+
+func (r *Repository) AddTaskInstanceTurn(ctx context.Context, turn *models.TaskInstanceTurn) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		INSERT INTO task_instance_turns (turn_id, instance_id, role, content, tool_call_id, tool_name, tool_arguments, tool_result, input_tokens, output_tokens, timestamp)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, turn.TurnID, turn.InstanceID, turn.Role, turn.Content, turn.ToolCallID, turn.ToolName, turn.ToolArguments, turn.ToolResult, turn.InputTokens, turn.OutputTokens, turn.Timestamp)
+	return err
+}
+
+func (r *Repository) GetTaskInstanceTurns(ctx context.Context, instanceID uuid.UUID) ([]*models.TaskInstanceTurn, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT turn_id, instance_id, role, content, tool_call_id, tool_name, tool_arguments, tool_result, input_tokens, output_tokens, timestamp
+		FROM task_instance_turns WHERE instance_id = $1
+		ORDER BY turn_id ASC
+	`, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var turns []*models.TaskInstanceTurn
+	for rows.Next() {
+		var t models.TaskInstanceTurn
+		if err := rows.Scan(&t.TurnID, &t.InstanceID, &t.Role, &t.Content, &t.ToolCallID, &t.ToolName, &t.ToolArguments, &t.ToolResult, &t.InputTokens, &t.OutputTokens, &t.Timestamp); err != nil {
+			return nil, err
+		}
+		turns = append(turns, &t)
+	}
+	return turns, nil
+}
+
+func (r *Repository) GetTaskInstanceTurnCount(ctx context.Context, instanceID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM task_instance_turns WHERE instance_id = $1
+	`, instanceID).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) DeleteTaskInstanceTurns(ctx context.Context, instanceID uuid.UUID) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		DELETE FROM task_instance_turns WHERE instance_id = $1
+	`, instanceID)
+	return err
+}
+
+// Session Turn Repository (Orchestrator Context)
+
+func (r *Repository) AddSessionTurn(ctx context.Context, turn *models.SessionTurn) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		INSERT INTO session_turns (turn_id, session_id, role, content, tool_call_id, tool_name, tool_arguments, tool_result, input_tokens, output_tokens, timestamp)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, turn.TurnID, turn.SessionID, turn.Role, turn.Content, turn.ToolCallID, turn.ToolName, turn.ToolArguments, turn.ToolResult, turn.InputTokens, turn.OutputTokens, turn.Timestamp)
+	return err
+}
+
+func (r *Repository) GetSessionTurns(ctx context.Context, sessionID uuid.UUID) ([]*models.SessionTurn, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT turn_id, session_id, role, content, tool_call_id, tool_name, tool_arguments, tool_result, input_tokens, output_tokens, timestamp
+		FROM session_turns WHERE session_id = $1
+		ORDER BY turn_id ASC
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var turns []*models.SessionTurn
+	for rows.Next() {
+		var t models.SessionTurn
+		if err := rows.Scan(&t.TurnID, &t.SessionID, &t.Role, &t.Content, &t.ToolCallID, &t.ToolName, &t.ToolArguments, &t.ToolResult, &t.InputTokens, &t.OutputTokens, &t.Timestamp); err != nil {
+			return nil, err
+		}
+		turns = append(turns, &t)
+	}
+	return turns, nil
+}
+
+func (r *Repository) GetSessionTurnCount(ctx context.Context, sessionID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM session_turns WHERE session_id = $1
+	`, sessionID).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) DeleteSessionTurns(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		DELETE FROM session_turns WHERE session_id = $1
+	`, sessionID)
 	return err
 }

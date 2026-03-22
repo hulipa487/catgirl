@@ -67,7 +67,7 @@ type AgentInput struct {
 
 // AgentMessage represents a message in the output history
 type AgentMessage struct {
-	Role       string   // "user", "assistant", "tool"
+	Role       string   // "system", "user", "assistant", "tool"
 	Content    string   // message content
 	ToolCalls  []ToolCallInfo
 	ToolCallID string   // for tool messages

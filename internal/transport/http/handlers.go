@@ -288,39 +288,7 @@ func (h *Handlers) GetUsageSummary(c *gin.Context) {
 }
 
 func (h *Handlers) SearchMemory(c *gin.Context) {
-	ctx := c.Request.Context()
-	ragSvc := h.runtime.GetRAGService()
-
-	sessionIDStr := c.Query("session_id")
-	if sessionIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
-		return
-	}
-
-	sessionID, err := uuid.Parse(sessionIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id"})
-		return
-	}
-
-	query := c.Query("q")
-	if query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "query required (q)"})
-		return
-	}
-
-	topK := 5
-	if topKStr := c.Query("top_k"); topKStr != "" {
-		// parse top_k
-	}
-
-	memories, err := ragSvc.RetrieveMemories(ctx, sessionID, query, topK)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"memories": memories})
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "RAG has been temporarily disabled"})
 }
 
 func (h *Handlers) GetSystemMetrics(c *gin.Context) {

@@ -15,7 +15,6 @@ import (
 	"github.com/hulipa487/catgirl/internal/services/auth"
 	"github.com/hulipa487/catgirl/internal/services/docker"
 	"github.com/hulipa487/catgirl/internal/services/llm"
-	"github.com/hulipa487/catgirl/internal/services/rag"
 	"github.com/hulipa487/catgirl/internal/services/snapshot"
 	"github.com/hulipa487/catgirl/internal/services/task"
 	"github.com/hulipa487/catgirl/internal/services/telegram"
@@ -35,11 +34,11 @@ type RuntimeCoordinator struct {
 	sessionSvc  *SessionService
 	authSvc     *auth.AuthService
 	snapshotSvc *snapshot.SnapshotService
-	ragSvc      *rag.RAGService
 	telegramSvc *telegram.TelegramService
 	toolLoader  *ToolLoader
 	dockerSvc   *docker.DockerService
 	containerMgr *docker.ContainerManager
+	contextBuilder *ContextBuilder
 
 	workerWg   sync.WaitGroup
 	stopCh     chan struct{}
@@ -55,6 +54,7 @@ type blockedAgentInfo struct {
 	ConversationHistory []llm.ChatMessage
 	Tools           []llm.Tool
 	ContainerID    string // Docker container ID for this task
+	Context         *WorkerContextManager // Persistent context for this worker
 }
 
 func NewRuntimeCoordinator(cfg *config.Config, logger zerolog.Logger) (*RuntimeCoordinator, error) {
@@ -137,8 +137,9 @@ func (rc *RuntimeCoordinator) initializeServices() error {
 	snapshotSvc := snapshot.NewSnapshotService(rc.repo, &rc.config.RuntimeSeed.Snapshot, rc.logger)
 	rc.snapshotSvc = snapshotSvc
 
-	ragSvc := rag.NewRAGService(rc.repo, rc.llmSvc, &rc.config.RuntimeSeed.RAG, rc.logger)
-	rc.ragSvc = ragSvc
+	// Initialize context builder for injecting memory context
+	rc.contextBuilder = NewContextBuilder(rc.repo, &rc.config.RuntimeSeed.RAG, rc.logger)
+	rc.sessionSvc.SetContextBuilder(rc.contextBuilder)
 
 	telegramSvc, err := telegram.NewTelegramService(&rc.config.RuntimeSeed.Telegram, rc.repo, rc.sessionSvc, rc.logger)
 	if err != nil {
@@ -291,6 +292,12 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	workerAgent.State = agent.AgentStateFree
 	workerAgent.OutputHistory = make([]agent.AgentMessage, 0)
 
+	// Create worker context manager for persistent storage
+	workerContext := NewWorkerContextManager(taskInstance.InstanceID, rc.repo, logger)
+	if err := workerContext.LoadHistory(ctx); err != nil {
+		logger.Warn().Err(err).Msg("Failed to load worker context history, starting fresh")
+	}
+
 	// Load tools from file-based tool loader
 	tools := rc.toolLoader.GetToolsByName(botConfig.AllowedAgentTools)
 
@@ -308,7 +315,7 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	}
 
 	// Register this agent as available for async callbacks
-	rc.registerAgentForCallback(workerAgent.ID, taskInstance, session, tools, containerID)
+	rc.registerAgentForCallback(workerAgent.ID, taskInstance, session, tools, containerID, workerContext)
 
 	// Send initial task input to the agent
 	initialInput := &agent.AgentInput{
@@ -321,11 +328,11 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	}
 
 	// Run the agent's main loop - this blocks until agent signals "free" state
-	return rc.runAgentLoop(workerAgent, taskInstance, session, botConfig, logger)
+	return rc.runAgentLoop(workerAgent, taskInstance, session, botConfig, workerContext, logger)
 }
 
 // runAgentLoop processes inputs from the agent's queue and calls the LLM
-func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskInstance *models.TaskInstance, session *Session, botConfig *config.TelegramBotConfig, logger zerolog.Logger) error {
+func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskInstance *models.TaskInstance, session *Session, botConfig *config.TelegramBotConfig, workerContext *WorkerContextManager, logger zerolog.Logger) error {
 	ctx := context.Background()
 	now := time.Now()
 
@@ -341,32 +348,60 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 
 		switch input.Type {
 		case "task_start":
-			// Initial task description
+			// Initial task description - system prompt is handled separately in BuildMessages
 			msg.Role = "user"
-			agentPrompt := botConfig.AgentSystemPrompt
-			msg.Content = fmt.Sprintf(agentPrompt, input.Content)
+			msg.Content = input.Content
+			// Store in persistent context
+			if err := workerContext.AddUserTurn(ctx, input.Content); err != nil {
+				logger.Warn().Err(err).Msg("Failed to store user turn in context")
+			}
 
 		case "tool_result":
 			// Async tool callback result
 			msg.Role = "tool"
 			msg.ToolCallID = input.ToolID
 			msg.Content = input.Content
+			// Store in persistent context
+			if err := workerContext.AddToolResultTurn(ctx, input.ToolID, input.ToolName, input.Content); err != nil {
+				logger.Warn().Err(err).Msg("Failed to store tool result in context")
+			}
 
 		case "message":
 			// Direct message input
 			msg.Role = "user"
 			msg.Content = input.Content
+			// Store in persistent context
+			if err := workerContext.AddUserTurn(ctx, input.Content); err != nil {
+				logger.Warn().Err(err).Msg("Failed to store message turn in context")
+			}
 
 		default:
 			logger.Warn().Str("input_type", input.Type).Msg("Unknown input type")
 			continue
 		}
 
-		// Add to output history
+		// Add to output history (in-memory for backward compatibility)
 		workerAgent.OutputHistory = append(workerAgent.OutputHistory, msg)
 
-		// Convert output history to LLM messages
-		llmMessages := rc.convertToLLMMessages(workerAgent.OutputHistory)
+		// Build context from RAG, working memory, and parent task
+		var contextStr string
+		if rc.contextBuilder != nil {
+			ctxContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+			contextStr, _ = rc.contextBuilder.BuildWorkerContext(
+				ctxContext,
+				session.ID,
+				workerAgent.ID,
+				taskInstance.Description,
+				taskInstance.ParentInstanceID,
+			)
+			cancel()
+			if contextStr != "" {
+				logger.Debug().Int("context_len", len(contextStr)).Msg("Injected context for worker")
+			}
+		}
+
+		// Build LLM messages from persistent context with system prompt and additional context
+		llmMessages := workerContext.BuildMessages(botConfig.AgentSystemPrompt, contextStr)
 
 		// Load tools from file-based tool loader
 		tools := rc.toolLoader.GetToolsByName(botConfig.AllowedAgentTools)
@@ -390,19 +425,28 @@ func (rc *RuntimeCoordinator) runAgentLoop(workerAgent *agent.WorkerAgent, taskI
 
 		llmMsg := resp.Choices[0].Message
 
-		// Add LLM response to output history
-		assistantMsg := agent.AgentMessage{
-			Role:     "assistant",
-			Content:  llmMsg.Content,
-			Timestamp: time.Now(),
-		}
+		// Convert tool calls for storage
+		var toolCallsForStorage []agent.ToolCallInfo
 		for _, tc := range llmMsg.ToolCalls {
-			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, agent.ToolCallInfo{
+			toolCallsForStorage = append(toolCallsForStorage, agent.ToolCallInfo{
 				ID:        tc.ID,
 				Name:      tc.Function.Name,
 				Arguments: tc.Function.Arguments,
 			})
 		}
+
+		// Store assistant turn in persistent context
+		if err := workerContext.AddAssistantTurn(ctx, llmMsg.Content, toolCallsForStorage, resp.Usage.PromptTokens, resp.Usage.CompletionTokens); err != nil {
+			logger.Warn().Err(err).Msg("Failed to store assistant turn in context")
+		}
+
+		// Add LLM response to output history (in-memory)
+		assistantMsg := agent.AgentMessage{
+			Role:      "assistant",
+			Content:   llmMsg.Content,
+			Timestamp: time.Now(),
+		}
+		assistantMsg.ToolCalls = toolCallsForStorage
 		workerAgent.OutputHistory = append(workerAgent.OutputHistory, assistantMsg)
 
 		// Process tool calls
@@ -558,7 +602,7 @@ Message: %s`, taskInstance.InstanceID.String(), taskInstance.Description, msgTex
 					toolResult = `{"error": "unknown tool"}`
 				}
 
-				// Add tool result to output history
+				// Add tool result to output history (in-memory)
 				toolMsg := agent.AgentMessage{
 					Role:       "tool",
 					ToolCallID: tc.ID,
@@ -566,6 +610,11 @@ Message: %s`, taskInstance.InstanceID.String(), taskInstance.Description, msgTex
 					Timestamp:  time.Now(),
 				}
 				workerAgent.OutputHistory = append(workerAgent.OutputHistory, toolMsg)
+
+				// Store tool result in persistent context
+				if err := workerContext.AddToolResultTurn(ctx, tc.ID, tc.Function.Name, toolResult); err != nil {
+					logger.Warn().Err(err).Msg("Failed to store tool result in context")
+				}
 			}
 
 			// If state is BLOCKING, wait for more input
@@ -590,35 +639,40 @@ Message: %s`, taskInstance.InstanceID.String(), taskInstance.Description, msgTex
 }
 
 // convertToLLMMessages converts agent output history to LLM chat messages
-func (rc *RuntimeCoordinator) convertToLLMMessages(history []agent.AgentMessage) []llm.ChatMessage {
-	messages := []llm.ChatMessage{}
+// If a system prompt is provided, it prepends it as a system message
+func (rc *RuntimeCoordinator) convertToLLMMessages(history []agent.AgentMessage, systemPrompt string) []llm.ChatMessage {
+	builder := llm.NewMessageBuilder(systemPrompt)
 
 	for _, msg := range history {
-		llmMsg := llm.ChatMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		}
-
-		if msg.Role == "tool" {
-			llmMsg.ToolCallID = msg.ToolCallID
-		}
-
-		if len(msg.ToolCalls) > 0 {
-			for _, tc := range msg.ToolCalls {
-				llmMsg.ToolCalls = append(llmMsg.ToolCalls, llm.ToolCall{
-					ID: tc.ID,
-					Function: llm.ToolCallFunction{
-						Name:      tc.Name,
-						Arguments: tc.Arguments,
-					},
-				})
+		switch msg.Role {
+		case "system":
+			// System messages are handled by the builder initialization
+			// If we encounter one in history, skip it (already added)
+			continue
+		case "user":
+			builder.AddUserMessage(msg.Content)
+		case "assistant":
+			var toolCalls []llm.ToolCall
+			if len(msg.ToolCalls) > 0 {
+				toolCalls = make([]llm.ToolCall, len(msg.ToolCalls))
+				for i, tc := range msg.ToolCalls {
+					toolCalls[i] = llm.ToolCall{
+						ID:   tc.ID,
+						Type: "function",
+						Function: llm.ToolCallFunction{
+							Name:      tc.Name,
+							Arguments: tc.Arguments,
+						},
+					}
+				}
 			}
+			builder.AddAssistantMessage(msg.Content, toolCalls)
+		case "tool":
+			builder.AddToolResult(msg.ToolCallID, msg.Content)
 		}
-
-		messages = append(messages, llmMsg)
 	}
 
-	return messages
+	return builder.Build()
 }
 
 func (rc *RuntimeCoordinator) snapshotCleanupWorker() {
@@ -697,7 +751,7 @@ func (rc *RuntimeCoordinator) logHealthStatus() {
 }
 
 // registerAgentForCallback registers an agent as available for async callbacks
-func (rc *RuntimeCoordinator) registerAgentForCallback(agentID string, taskInstance *models.TaskInstance, session *Session, tools []llm.Tool, containerID string) {
+func (rc *RuntimeCoordinator) registerAgentForCallback(agentID string, taskInstance *models.TaskInstance, session *Session, tools []llm.Tool, containerID string, context *WorkerContextManager) {
 	rc.blockedAgentsMu.Lock()
 	defer rc.blockedAgentsMu.Unlock()
 
@@ -706,6 +760,7 @@ func (rc *RuntimeCoordinator) registerAgentForCallback(agentID string, taskInsta
 		Session:     session,
 		Tools:       tools,
 		ContainerID: containerID,
+		Context:     context,
 	}
 
 	rc.logger.Debug().Str("agent_id", agentID).Str("instance_id", taskInstance.InstanceID.String()).Str("container_id", containerID).Msg("Agent registered for callback")
@@ -804,9 +859,7 @@ func (rc *RuntimeCoordinator) GetAuthService() *auth.AuthService {
 	return rc.authSvc
 }
 
-func (rc *RuntimeCoordinator) GetRAGService() *rag.RAGService {
-	return rc.ragSvc
-}
+// removed GetRAGService
 
 func (rc *RuntimeCoordinator) GetRepository() *repository.Repository {
 	return rc.repo

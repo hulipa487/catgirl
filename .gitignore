@@ -52,3 +52,8 @@ web/admin/package-lock.json
 
 # Snapshots/storage
 /var/catgirl/
+
+# Environment files
+.env
+.env.local
+.env.*.local

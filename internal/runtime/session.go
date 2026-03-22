@@ -18,15 +18,16 @@ import (
 )
 
 type SessionService struct {
-	repo        *repository.Repository
-	config      *config.RuntimeConfig
-	logger      zerolog.Logger
-	llmSvc      *llm.LLMService
-	taskService *task.TaskService
-	toolLoader  *ToolLoader
-	sessions    map[uuid.UUID]*Session
-	mu          sync.RWMutex
-	OnReply     func(telegramUserID int64, message string)
+	repo           *repository.Repository
+	config         *config.RuntimeConfig
+	logger         zerolog.Logger
+	llmSvc         *llm.LLMService
+	taskService    *task.TaskService
+	toolLoader     *ToolLoader
+	contextBuilder *ContextBuilder
+	sessions       map[uuid.UUID]*Session
+	mu             sync.RWMutex
+	OnReply        func(telegramUserID int64, message string)
 }
 
 type OrchestratorState struct {
@@ -42,6 +43,7 @@ type Session struct {
 	State          *OrchestratorState
 	LTM            *LongTermMemoryManager
 	History        *ConversationHistoryManager
+	Context        *OrchestratorContextManager // Persistent context with token tracking
 	InputQueue     chan string // Queue for async messages from telegram/subtasks
 	CreatedAt      time.Time
 	LastActive     time.Time
@@ -74,6 +76,11 @@ func NewSessionService(repo *repository.Repository, cfg *config.RuntimeConfig, l
 	}
 }
 
+// SetContextBuilder sets the context builder (called after RAG service is initialized)
+func (s *SessionService) SetContextBuilder(cb *ContextBuilder) {
+	s.contextBuilder = cb
+}
+
 func (s *SessionService) CreateSession(ctx context.Context, telegramUserID int64, botToken string, username, firstName, lastName string) (*Session, error) {
 	sessionID := uuid.New()
 	now := time.Now()
@@ -102,6 +109,7 @@ func (s *SessionService) CreateSession(ctx context.Context, telegramUserID int64
 		BotToken:       botToken,
 		State:          &OrchestratorState{},
 		History:        NewConversationHistoryManager(sessionID, s.repo, &s.config.Context),
+		Context:        NewOrchestratorContextManager(sessionID, s.repo, s.logger),
 		InputQueue:     make(chan string, 100),
 		CreatedAt:      now,
 		LastActive:     now,
@@ -149,6 +157,7 @@ func (s *SessionService) GetSession(ctx context.Context, sessionID uuid.UUID) (*
 		BotToken:       sessionModel.BotToken,
 		State:          &state,
 		History:        NewConversationHistoryManager(sessionModel.ID, s.repo, &s.config.Context),
+		Context:        NewOrchestratorContextManager(sessionModel.ID, s.repo, s.logger),
 		InputQueue:     make(chan string, 100), // Input queue for the session
 		CreatedAt:      sessionModel.CreatedAt,
 		LastActive:     sessionModel.UpdatedAt,
@@ -232,14 +241,18 @@ func (s *SessionService) HandleUserMessage(ctx context.Context, sessionIDInterfa
 
 // orchestratorLoop is the background loop running for a session
 func (s *SessionService) orchestratorLoop(session *Session) {
+	ctx := context.Background()
+
+	// Load existing context history
+	if err := session.Context.LoadHistory(ctx); err != nil {
+		s.logger.Warn().Err(err).Msg("Failed to load orchestrator context history, starting fresh")
+	}
+
 	for {
 		message := <-session.InputQueue
 
 		// Wait a brief moment to ensure DB transaction finishes
 		time.Sleep(100 * time.Millisecond)
-
-		// Get recent context
-		recentTurns := session.History.GetRecentTurns(session.History.cfg.PreserveRecentTurns)
 
 		var botConfig *config.TelegramBotConfig
 		for _, b := range s.config.Telegram.Bots {
@@ -256,45 +269,24 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 			botConfig = &config.TelegramBotConfig{}
 		}
 
-		sysPrompt := botConfig.OrchestratorSystemPrompt
-
-		messages := []llm.ChatMessage{
-			{Role: "system", Content: sysPrompt},
-		}
-
-		for _, t := range recentTurns {
-			if t.Action == "USER_MESSAGE" {
-				var msgData map[string]interface{}
-				if err := json.Unmarshal(t.Result, &msgData); err == nil {
-					if text, ok := msgData["text"].(string); ok {
-						if text != "" {
-							messages = append(messages, llm.ChatMessage{Role: "user", Content: text})
-						}
-					}
-				}
-			} else if t.Action == "SEND_MESSAGE" {
-				var msgData map[string]interface{}
-				if err := json.Unmarshal(t.Result, &msgData); err == nil {
-					if text, ok := msgData["text"].(string); ok {
-						if text != "" {
-							messages = append(messages, llm.ChatMessage{Role: "assistant", Content: text})
-						}
-					}
-				}
-			} else if t.Action == "THINK" {
-				// We can optionally pass previous thoughts as assistant messages
-				messages = append(messages, llm.ChatMessage{Role: "assistant", Content: string(t.Result)})
-			} else if t.Action == "TOOL_CALL" || t.Action == "TOOL_RESULT" {
-				// In a full implementation, we'd reconstruct the exact tool call history here.
-				// We will handle the current loop history inside the loop below.
+		// Build context from RAG for orchestrator
+		var contextStr string
+		if s.contextBuilder != nil {
+			ctxContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			contextStr, _ = s.contextBuilder.BuildOrchestratorContext(ctxContext, session.ID, message)
+			cancel()
+			if contextStr != "" {
+				s.logger.Debug().Int("context_len", len(contextStr)).Msg("Injected context for orchestrator")
 			}
 		}
 
-		// If recentTurns didn't include the current message we just pushed
-		// (e.g. async timing), add it
-		if len(messages) == 1 || messages[len(messages)-1].Content != message {
-			messages = append(messages, llm.ChatMessage{Role: "user", Content: message})
+		// Store user message in persistent context
+		if err := session.Context.AddUserTurn(ctx, message); err != nil {
+			s.logger.Warn().Err(err).Msg("Failed to store user turn in context")
 		}
+
+		// Build messages using persistent context
+		llmMessages := session.Context.BuildMessages(botConfig.OrchestratorSystemPrompt, contextStr)
 
 		// Load tools from file-based tool loader
 		tools := s.toolLoader.GetToolsByName(botConfig.AllowedOrchestratorTools)
@@ -303,38 +295,35 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 			s.logger.Warn().Msg("No tools loaded for orchestrator")
 		}
 
-		resp, err := s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(botConfig.GPModel, s.config.LLM.Providers), messages, tools, 0)
+		// Call LLM
+		resp, err := s.llmSvc.ChatWithTools(ctx, s.llmSvc.GetRandomGPModel(botConfig.GPModel, s.config.LLM.Providers), llmMessages, tools, 0)
 
 		if err != nil || len(resp.Choices) == 0 {
 			s.logger.Error().Err(err).Msg("Failed to call LLM for reply")
 			return
 		}
 
-		msg := resp.Choices[0].Message
+		llmMsg := resp.Choices[0].Message
 
 		// Record usage
 		billingSvc := agent.NewBillingService(s.repo, session.ID, fmt.Sprintf("%d", session.TelegramUserID))
-		_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
+		_ = billingSvc.RecordUsage(ctx, nil, models.UsageOperationLLMCall, resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
 
 		// Process Tool Calls (or text response)
-		if len(msg.ToolCalls) > 0 {
-			// Add the assistant message with tool calls to messages
-			assistantMsg := llm.ChatMessage{
-				Role:       "assistant",
-				Content:    msg.Content,
-				ToolCalls:  msg.ToolCalls,
+		if len(llmMsg.ToolCalls) > 0 {
+			// Store assistant turn with tool calls
+			if err := session.Context.AddAssistantTurn(ctx, llmMsg.Content, llmMsg.ToolCalls, resp.Usage.PromptTokens, resp.Usage.CompletionTokens); err != nil {
+				s.logger.Warn().Err(err).Msg("Failed to store assistant turn in context")
 			}
-			messages = append(messages, assistantMsg)
 
-			// Process each tool call and collect tool responses
-			for _, tc := range msg.ToolCalls {
+			// Process each tool call
+			for _, tc := range llmMsg.ToolCalls {
 				s.logger.Info().Str("tool", tc.Function.Name).Str("args", tc.Function.Arguments).Msg("Main Orchestrator called tool")
 
 				var args map[string]interface{}
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
 				var toolResult string
-				var toolResultData map[string]interface{}
 
 				switch tc.Function.Name {
 				case "SEND_MESSAGE":
@@ -343,13 +332,12 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 							s.OnReply(session.TelegramUserID, text)
 						}
 						toolResult = fmt.Sprintf(`{"status": "sent", "message": %s}`, tc.Function.Arguments)
-						toolResultData = map[string]interface{}{"status": "sent", "message": text}
 					}
 				case "SPAWN_TASK":
 					description, _ := args["description"].(string)
 					if description != "" {
 						taskInstance, err := s.taskService.SpawnRootTask(
-							context.Background(),
+							ctx,
 							session.ID,
 							"orchestrator",
 							description,
@@ -365,11 +353,6 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 								Str("task_id", taskInstance.TaskID.String()).
 								Msg("Task spawned by orchestrator")
 							toolResult = fmt.Sprintf(`{"success": true, "task_id": "%s"}`, taskInstance.InstanceID.String())
-							toolResultData = map[string]interface{}{
-								"success":     true,
-								"task_id":     taskInstance.InstanceID.String(),
-								"description": description,
-							}
 						}
 					}
 				case "SET_STATE":
@@ -379,66 +362,49 @@ func (s *SessionService) orchestratorLoop(session *Session) {
 					toolResult = `{"error": "unknown tool"}`
 				}
 
-				// Add tool response message for follow-up LLM call (OpenAI format)
-				toolResp := llm.ChatMessage{
-					Role:         "tool",
-					ToolCallID:   tc.ID,
-					Content:       toolResult,
-				}
-				messages = append(messages, toolResp)
-
-				// Record the tool call in conversation history
-				if toolResultData != nil {
-					resultBytes, _ := json.Marshal(toolResultData)
-					agentTurn := &models.ConversationTurn{
-						Thought:   fmt.Sprintf("Called %s tool", tc.Function.Name),
-						Action:    "TOOL_CALL",
-						Result:    resultBytes,
-						Tokens:    0,
-						Timestamp: time.Now(),
-					}
-					_ = s.AddConversationTurn(context.Background(), session.ID, agentTurn)
+				// Store tool result in persistent context
+				if err := session.Context.AddToolResultTurn(ctx, tc.ID, tc.Function.Name, toolResult); err != nil {
+					s.logger.Warn().Err(err).Msg("Failed to store tool result in context")
 				}
 			}
 
+			// Rebuild messages with tool results for follow-up call
+			llmMessages = session.Context.BuildMessages(botConfig.OrchestratorSystemPrompt, "")
+
 			// Follow-up LLM call with tool results
-			resp, err = s.llmSvc.ChatWithTools(context.Background(), s.llmSvc.GetRandomGPModel(botConfig.GPModel, s.config.LLM.Providers), messages, tools, 0)
+			resp, err = s.llmSvc.ChatWithTools(ctx, s.llmSvc.GetRandomGPModel(botConfig.GPModel, s.config.LLM.Providers), llmMessages, tools, 0)
 			if err != nil || len(resp.Choices) == 0 {
 				s.logger.Error().Err(err).Msg("Failed to call LLM for follow-up")
 				continue
 			}
 
 			// Record usage for follow-up call
-			_ = billingSvc.RecordUsage(context.Background(), nil, models.UsageOperationLLMCall, resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
+			_ = billingSvc.RecordUsage(ctx, nil, models.UsageOperationLLMCall, resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, string(models.MembershipFree))
 
-			msg = resp.Choices[0].Message
+			llmMsg = resp.Choices[0].Message
 
-			// Any text content after tool calls is internal reasoning only - do NOT send to user
-			// The only way to communicate with the user is via SEND_MESSAGE tool
-			if msg.Content != "" {
-				s.logger.Info().Str("content", msg.Content).Msg("Orchestrator internal reasoning after tool call")
-
-				agentTurn := &models.ConversationTurn{
-					Thought:   msg.Content,
-					Action:    "THINK",
-					Result:    []byte(`{}`),
-					Tokens:    0,
-					Timestamp: time.Now(),
+			// Store follow-up assistant turn (internal reasoning)
+			if llmMsg.Content != "" || len(llmMsg.ToolCalls) > 0 {
+				if err := session.Context.AddAssistantTurn(ctx, llmMsg.Content, llmMsg.ToolCalls, resp.Usage.PromptTokens, resp.Usage.CompletionTokens); err != nil {
+					s.logger.Warn().Err(err).Msg("Failed to store follow-up assistant turn in context")
 				}
-				_ = s.AddConversationTurn(context.Background(), session.ID, agentTurn)
+			}
+
+			// Any text content after tool calls is internal reasoning only
+			if llmMsg.Content != "" {
+				s.logger.Info().Str("content", llmMsg.Content).Msg("Orchestrator internal reasoning after tool call")
 			}
 		} else {
-			// Log the text as internal thought/reasoning, but DO NOT send it to the user
-			s.logger.Info().Str("content", msg.Content).Msg("Main Orchestrator reasoned (no tool called)")
-
-			agentTurn := &models.ConversationTurn{
-				Thought:   msg.Content,
-				Action:    "THINK",
-				Result:    []byte(`{}`), // No tool result to capture
-				Tokens:    0,
-				Timestamp: time.Now(),
+			// Store assistant turn (internal reasoning)
+			if err := session.Context.AddAssistantTurn(ctx, llmMsg.Content, nil, resp.Usage.PromptTokens, resp.Usage.CompletionTokens); err != nil {
+				s.logger.Warn().Err(err).Msg("Failed to store assistant turn in context")
 			}
-			_ = s.AddConversationTurn(context.Background(), session.ID, agentTurn)
+
+			// Text content is internal reasoning, DO NOT send to user
+			// The only way to communicate with the user is via SEND_MESSAGE tool
+			if llmMsg.Content != "" {
+				s.logger.Info().Str("content", llmMsg.Content).Msg("Main Orchestrator reasoned (no tool called)")
+			}
 		}
 	}
 }

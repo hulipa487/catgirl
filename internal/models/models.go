@@ -285,3 +285,33 @@ type ActionResult struct {
 	Error   string                 `json:"error,omitempty"`
 	Logs    []string               `json:"logs,omitempty"`
 }
+
+// TaskInstanceTurn represents a single turn in a worker's conversation history
+type TaskInstanceTurn struct {
+	TurnID        int             `json:"turn_id" db:"turn_id"`
+	InstanceID    uuid.UUID       `json:"instance_id" db:"instance_id"`
+	Role          string          `json:"role" db:"role"`           // "user", "assistant", "tool"
+	Content       string          `json:"content" db:"content"`     // Message content
+	ToolCallID    *string         `json:"tool_call_id" db:"tool_call_id"` // For tool messages
+	ToolName      *string         `json:"tool_name" db:"tool_name"`       // Tool name if applicable
+	ToolArguments json.RawMessage `json:"tool_arguments" db:"tool_arguments"` // For assistant tool calls
+	ToolResult    json.RawMessage `json:"tool_result" db:"tool_result"`     // For tool result content
+	InputTokens   int             `json:"input_tokens" db:"input_tokens"`
+	OutputTokens  int             `json:"output_tokens" db:"output_tokens"`
+	Timestamp     time.Time       `json:"timestamp" db:"timestamp"`
+}
+
+// SessionTurn represents a single turn in an orchestrator's conversation history
+type SessionTurn struct {
+	TurnID        int             `json:"turn_id" db:"turn_id"`
+	SessionID     uuid.UUID       `json:"session_id" db:"session_id"`
+	Role          string          `json:"role" db:"role"`           // "user", "assistant", "tool"
+	Content       string          `json:"content" db:"content"`     // Message content
+	ToolCallID    *string         `json:"tool_call_id" db:"tool_call_id"` // For tool messages
+	ToolName      *string         `json:"tool_name" db:"tool_name"`       // Tool name if applicable
+	ToolArguments json.RawMessage `json:"tool_arguments" db:"tool_arguments"` // For assistant tool calls
+	ToolResult    json.RawMessage `json:"tool_result" db:"tool_result"`     // For tool result content
+	InputTokens   int             `json:"input_tokens" db:"input_tokens"`
+	OutputTokens  int             `json:"output_tokens" db:"output_tokens"`
+	Timestamp     time.Time       `json:"timestamp" db:"timestamp"`
+}

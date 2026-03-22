@@ -181,7 +181,7 @@ func (s *DockerService) StopContainer(ctx context.Context, containerID string) e
 	return err
 }
 
-// ExecuteCode executes code in a container and returns the output
+// ExecuteCode executes code in a container and returns the combined stdout/stderr output
 func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, code string, language string) (string, error) {
 	// First try via HTTP API if container has it
 	output, err := s.ExecuteCodeViaAPI(ctx, containerID, code, language)
@@ -217,9 +217,9 @@ func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, cod
 	}
 	defer attachResp.Close()
 
-	// Read output using the hijacked connection
+	// Read all stdout from the hijacked connection
 	var outputBuf bytes.Buffer
-	buf := make([]byte, 1024)
+	buf := make([]byte, 4096)
 	for {
 		n, err := attachResp.Conn.Read(buf)
 		if n > 0 {
