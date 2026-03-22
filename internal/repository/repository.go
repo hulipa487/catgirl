@@ -33,7 +33,6 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	var minAgents, maxAgents, idleTimeoutSecs int
 	var snapshotEnabled bool
 	var snapshotStoragePath, snapshotRetCompleted, snapshotRetFailed, snapshotRetExited, snapshotRetInterrupted string
-	var telegramBotsJSON json.RawMessage
 	var telegramListenAddr string
 	var authJwtSecret, authJwtIssuer string
 	var authAllowedMemberships json.RawMessage
@@ -53,7 +52,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 			min_agents, max_agents, idle_timeout_seconds,
 			snapshot_enabled, snapshot_storage_path, snapshot_max_storage_bytes,
 			snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
-			telegram_bots, telegram_listen_addr,
+			telegram_listen_addr,
 			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
 			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
 			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity,
@@ -67,7 +66,7 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 		&minAgents, &maxAgents, &idleTimeoutSecs,
 		&snapshotEnabled, &snapshotStoragePath, &snapshotMaxStorageBytes,
 		&snapshotRetCompleted, &snapshotRetFailed, &snapshotRetExited, &snapshotRetInterrupted,
-		&telegramBotsJSON, &telegramListenAddr,
+		&telegramListenAddr,
 		&authJwtSecret, &authJwtIssuer, &authAllowedMemberships,
 		&contextMaxTokens, &contextCompactionThreshold, &contextPreserveRecentTurns, &contextCompactionAgentType,
 		&ragEnabled, &ragDefaultTopK, &ragAutoRetrieveEnabled, &ragAutoRetrieveOnLlmCall, &ragAutoRetrieveTopK, &ragAutoRetrieveMaxResults, &ragMinSimilarity,
@@ -108,8 +107,32 @@ func (r *Repository) GetRuntimeConfig(ctx context.Context) (*config.RuntimeConfi
 	var allowedMemberships []string
 	_ = json.Unmarshal(authAllowedMemberships, &allowedMemberships)
 
+	// Fetch all telegram bots
+	botsRows, err := r.db.Pool.Query(ctx, `
+		SELECT
+			bot_token, webhook_url, orchestrator_system_prompt, agent_system_prompt,
+			allowed_orchestrator_tools, allowed_agent_tools, gp_model, reasoner_model
+		FROM telegram_bots
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch telegram_bots: %w", err)
+	}
+	defer botsRows.Close()
+
 	var telegramBots []config.TelegramBotConfig
-	_ = json.Unmarshal(telegramBotsJSON, &telegramBots)
+	for botsRows.Next() {
+		var bot config.TelegramBotConfig
+		var orchToolsJSON, agentToolsJSON json.RawMessage
+		if err := botsRows.Scan(
+			&bot.BotToken, &bot.WebhookURL, &bot.OrchestratorSystemPrompt, &bot.AgentSystemPrompt,
+			&orchToolsJSON, &agentToolsJSON, &bot.GPModel, &bot.ReasonerModel,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan telegram bot: %w", err)
+		}
+		_ = json.Unmarshal(orchToolsJSON, &bot.AllowedOrchestratorTools)
+		_ = json.Unmarshal(agentToolsJSON, &bot.AllowedAgentTools)
+		telegramBots = append(telegramBots, bot)
+	}
 
 	return &config.RuntimeConfig{
 		Global: config.GlobalConfig{
@@ -167,8 +190,6 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 	}
 	defer tx.Rollback(ctx)
 
-	telegramBotsJSONBytes, _ := json.Marshal(cfg.Telegram.Bots)
-
 	// Upsert System Config (per-bot prompts/tools now stored in telegram_bots JSONB)
 	// Note: auth columns are no longer used - auth is via mtfpass URL from config file
 	_, err = tx.Exec(ctx, `
@@ -177,7 +198,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			embedding_dims, max_tokens, timeout_seconds,
 			min_agents, max_agents, idle_timeout_seconds,
 			snapshot_enabled, snapshot_storage_path, snapshot_max_storage_bytes, snapshot_retention_completed, snapshot_retention_failed, snapshot_retention_exited, snapshot_retention_interrupted,
-			telegram_bots, telegram_listen_addr,
+			telegram_listen_addr,
 			auth_jwt_secret, auth_jwt_issuer, auth_allowed_memberships,
 			context_max_tokens, context_compaction_threshold, context_preserve_recent_turns, context_compaction_agent_type,
 			rag_enabled, rag_default_top_k, rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k, rag_auto_retrieve_max_results, rag_min_similarity,
@@ -188,19 +209,19 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 			$3, $4, $5,
 			$6, $7, $8,
 			$9, $10, $11, $12, $13, $14, $15,
-			$16, $17,
-			$18, $19, $20,
-			$21, $22, $23, $24,
-			$25, $26, $27, $28, $29, $30, $31,
-			$32, $33, $34,
-			$35, NOW()
+			$16,
+			$17, $18, $19,
+			$20, $21, $22, $23,
+			$24, $25, $26, $27, $28, $29, $30,
+			$31, $32, $33,
+			$34, NOW()
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			max_task_depth = EXCLUDED.max_task_depth, max_queue_size = EXCLUDED.max_queue_size,
 			embedding_dims = EXCLUDED.embedding_dims, max_tokens = EXCLUDED.max_tokens, timeout_seconds = EXCLUDED.timeout_seconds,
 			min_agents = EXCLUDED.min_agents, max_agents = EXCLUDED.max_agents, idle_timeout_seconds = EXCLUDED.idle_timeout_seconds,
 			snapshot_enabled = EXCLUDED.snapshot_enabled, snapshot_storage_path = EXCLUDED.snapshot_storage_path, snapshot_max_storage_bytes = EXCLUDED.snapshot_max_storage_bytes, snapshot_retention_completed = EXCLUDED.snapshot_retention_completed, snapshot_retention_failed = EXCLUDED.snapshot_retention_failed, snapshot_retention_exited = EXCLUDED.snapshot_retention_exited, snapshot_retention_interrupted = EXCLUDED.snapshot_retention_interrupted,
-			telegram_bots = EXCLUDED.telegram_bots, telegram_listen_addr = EXCLUDED.telegram_listen_addr,
+			telegram_listen_addr = EXCLUDED.telegram_listen_addr,
 			auth_jwt_secret = EXCLUDED.auth_jwt_secret, auth_jwt_issuer = EXCLUDED.auth_jwt_issuer, auth_allowed_memberships = EXCLUDED.auth_allowed_memberships,
 			context_max_tokens = EXCLUDED.context_max_tokens, context_compaction_threshold = EXCLUDED.context_compaction_threshold, context_preserve_recent_turns = EXCLUDED.context_preserve_recent_turns, context_compaction_agent_type = EXCLUDED.context_compaction_agent_type,
 			rag_enabled = EXCLUDED.rag_enabled, rag_default_top_k = EXCLUDED.rag_default_top_k, rag_auto_retrieve_enabled = EXCLUDED.rag_auto_retrieve_enabled, rag_auto_retrieve_on_llm_call = EXCLUDED.rag_auto_retrieve_on_llm_call, rag_auto_retrieve_top_k = EXCLUDED.rag_auto_retrieve_top_k, rag_auto_retrieve_max_results = EXCLUDED.rag_auto_retrieve_max_results, rag_min_similarity = EXCLUDED.rag_min_similarity,
@@ -211,7 +232,7 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 		cfg.LLM.EmbeddingDims, cfg.LLM.MaxTokens, cfg.LLM.TimeoutSecs,
 		cfg.AgentPool.MinAgents, cfg.AgentPool.MaxAgents, cfg.AgentPool.IdleTimeoutSecs,
 		cfg.Snapshot.Enabled, cfg.Snapshot.StoragePath, cfg.Snapshot.MaxStorageBytes, cfg.Snapshot.Retention.Completed, cfg.Snapshot.Retention.Failed, cfg.Snapshot.Retention.Exited, cfg.Snapshot.Retention.Interrupted,
-		telegramBotsJSONBytes, cfg.Telegram.ListenAddr,
+		cfg.Telegram.ListenAddr,
 		"", "", "[]", // Auth fields no longer used - mtfpass URL is from config file
 		cfg.Context.MaxTokens, cfg.Context.CompactionThreshold, cfg.Context.PreserveRecentTurns, cfg.Context.CompactionAgentType,
 		cfg.RAG.Enabled, cfg.RAG.DefaultTopK, cfg.RAG.AutoRetrieve.Enabled, cfg.RAG.AutoRetrieve.OnLLMCall, cfg.RAG.AutoRetrieve.TopK, cfg.RAG.AutoRetrieve.MaxResults, cfg.RAG.MinSimilarity,
@@ -220,6 +241,27 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert system config: %w", err)
+	}
+
+	// Sync all telegram bots
+	_, err = tx.Exec(ctx, `DELETE FROM telegram_bots`)
+	if err != nil {
+		return fmt.Errorf("failed to clear telegram_bots: %w", err)
+	}
+
+	for _, bot := range cfg.Telegram.Bots {
+		orchToolsJSON, _ := json.Marshal(bot.AllowedOrchestratorTools)
+		agentToolsJSON, _ := json.Marshal(bot.AllowedAgentTools)
+		_, err := tx.Exec(ctx, `
+			INSERT INTO telegram_bots (
+				bot_token, webhook_url, orchestrator_system_prompt, agent_system_prompt,
+				allowed_orchestrator_tools, allowed_agent_tools, gp_model, reasoner_model
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, bot.BotToken, bot.WebhookURL, bot.OrchestratorSystemPrompt, bot.AgentSystemPrompt,
+			orchToolsJSON, agentToolsJSON, bot.GPModel, bot.ReasonerModel)
+		if err != nil {
+			return fmt.Errorf("failed to insert telegram bot: %w", err)
+		}
 	}
 
 	// Sync all LLM providers (global - shared across all bots)
