@@ -301,16 +301,16 @@ func (rc *RuntimeCoordinator) executeTask(workerAgent *agent.WorkerAgent, taskIn
 	// Load tools from file-based tool loader
 	tools := rc.toolLoader.GetToolsByName(botConfig.AllowedAgentTools)
 
-	// For root tasks (no parent), create or reuse a Docker container
+	// Create a dedicated Docker container for this specific worker instance
 	var containerID string
-	if taskInstance.ParentInstanceID == nil && rc.containerMgr != nil {
-		// This is a root task - create a container for it
+	if rc.containerMgr != nil {
+		// Key the container by InstanceID (this specific task instance) instead of TaskID (family)
 		containerInfo, err := rc.containerMgr.GetOrCreateContainer(ctx, taskInstance.InstanceID, "")
 		if err != nil {
-			logger.Warn().Err(err).Msg("failed to create container for root task, code execution may not work")
+			logger.Warn().Err(err).Msg("failed to create dedicated container for worker, code execution may not work")
 		} else {
 			containerID = containerInfo.ContainerID
-			logger.Info().Str("container_id", containerID).Msg("container assigned to root task")
+			logger.Info().Str("container_id", containerID).Msg("dedicated container assigned to worker")
 		}
 	}
 
@@ -574,10 +574,9 @@ Message: %s`, taskInstance.InstanceID.String(), taskInstance.Description, msgTex
 						}
 					}
 
-				case "EXECUTE_CODE":
-					code, _ := args["code"].(string)
-					language, _ := args["language"].(string)
-					if code == "" {
+				case "EXECUTE_CMD":
+					cmd, _ := args["code"].(string)
+					if cmd == "" {
 						toolResult = `{"success": false, "error": "code is required"}`
 					} else if rc.dockerSvc == nil {
 						toolResult = `{"success": false, "error": "docker service not available"}`
@@ -589,7 +588,7 @@ Message: %s`, taskInstance.InstanceID.String(), taskInstance.Description, msgTex
 						if !exists || info.ContainerID == "" {
 							toolResult = `{"success": false, "error": "no container available for this task"}`
 						} else {
-							output, err := rc.dockerSvc.ExecuteCode(ctx, info.ContainerID, code, language)
+							output, err := rc.dockerSvc.ExecuteCmd(ctx, info.ContainerID, cmd)
 							if err != nil {
 								toolResult = fmt.Sprintf(`{"success": false, "error": %s}`, JSONescape(err.Error()))
 							} else {
@@ -766,17 +765,17 @@ func (rc *RuntimeCoordinator) registerAgentForCallback(agentID string, taskInsta
 	rc.logger.Debug().Str("agent_id", agentID).Str("instance_id", taskInstance.InstanceID.String()).Str("container_id", containerID).Msg("Agent registered for callback")
 }
 
-// unregisterAgentForCallback removes an agent from the callback registry and releases its container
+// unregisterAgentForCallback removes an agent from the callback registry and releases its dedicated container
 func (rc *RuntimeCoordinator) unregisterAgentForCallback(agentID string) {
 	rc.blockedAgentsMu.Lock()
 	defer rc.blockedAgentsMu.Unlock()
 
 	info, exists := rc.blockedAgents[agentID]
 	if exists && info.ContainerID != "" && rc.containerMgr != nil {
-		// Release the container for this task
+		// Every worker has its own dedicated container now, keyed by InstanceID
 		go func() {
 			if err := rc.containerMgr.ReleaseContainer(context.Background(), info.TaskInstance.InstanceID); err != nil {
-				rc.logger.Warn().Err(err).Str("instance_id", info.TaskInstance.InstanceID.String()).Msg("failed to release container")
+				rc.logger.Warn().Err(err).Str("instance_id", info.TaskInstance.InstanceID.String()).Msg("failed to release dedicated container")
 			}
 		}()
 	}

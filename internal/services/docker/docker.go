@@ -44,7 +44,7 @@ func NewDockerService(logger zerolog.Logger, registry string, defaultImage strin
 	}, nil
 }
 
-// ContainerManager manages containers per task
+// ContainerManager manages dedicated worker containers
 type ContainerManager struct {
 	svc        *DockerService
 	containers map[uuid.UUID]*ContainerInfo
@@ -59,14 +59,14 @@ func NewContainerManager(svc *DockerService) *ContainerManager {
 	}
 }
 
-// GetOrCreateContainer gets an existing container for a task or creates a new one
+// GetOrCreateContainer gets an existing dedicated worker container or creates a new one
 func (m *ContainerManager) GetOrCreateContainer(ctx context.Context, taskID uuid.UUID, image string) (*ContainerInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Return existing container if available
 	if info, ok := m.containers[taskID]; ok {
-		m.svc.logger.Info().Str("task_id", taskID.String()).Str("container_id", info.ContainerID).Msg("Reusing existing container")
+		m.svc.logger.Info().Str("worker_instance_id", taskID.String()).Str("container_id", info.ContainerID).Msg("reusing dedicated worker container")
 		return info, nil
 	}
 
@@ -83,11 +83,11 @@ func (m *ContainerManager) GetOrCreateContainer(ctx context.Context, taskID uuid
 	}
 	m.containers[taskID] = info
 
-	m.svc.logger.Info().Str("task_id", taskID.String()).Str("container_id", containerID).Msg("Created new container for task")
+	m.svc.logger.Info().Str("worker_instance_id", taskID.String()).Str("container_id", containerID).Msg("created dedicated worker container")
 	return info, nil
 }
 
-// ReleaseContainer removes a container for a task
+// ReleaseContainer removes a dedicated worker container
 func (m *ContainerManager) ReleaseContainer(ctx context.Context, taskID uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -182,10 +182,10 @@ func (s *DockerService) StopContainer(ctx context.Context, containerID string) e
 	return err
 }
 
-// ExecuteCode executes code in a container and returns the combined stdout/stderr output
-func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, code string, language string) (string, error) {
+// ExecuteCmd executes a command in a container and returns the combined stdout/stderr output
+func (s *DockerService) ExecuteCmd(ctx context.Context, containerID string, cmd string) (string, error) {
 	// First try via HTTP API if container has it
-	output, err := s.ExecuteCodeViaAPI(ctx, containerID, code, language)
+	output, err := s.ExecuteCmdViaAPI(ctx, containerID, cmd)
 	if err == nil {
 		return output, nil
 	}
@@ -197,7 +197,7 @@ func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, cod
 		AttachStdout: true,
 		AttachStderr: true,
 		TTY:          true,
-		Cmd:          []string{language, "-c", code},
+		Cmd:          []string{"sh", "-c", cmd},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create exec: %w", err)
@@ -248,8 +248,8 @@ func (s *DockerService) ExecuteCode(ctx context.Context, containerID string, cod
 	return result, nil
 }
 
-// ExecuteCodeViaAPI executes code using an HTTP API inside the container
-func (s *DockerService) ExecuteCodeViaAPI(ctx context.Context, containerID string, code string, language string) (string, error) {
+// ExecuteCmdViaAPI executes a command using an HTTP API inside the container
+func (s *DockerService) ExecuteCmdViaAPI(ctx context.Context, containerID string, cmd string) (string, error) {
 	// Get container IP - try to get from default network
 	inspectResult, err := s.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
@@ -275,8 +275,8 @@ func (s *DockerService) ExecuteCodeViaAPI(ctx context.Context, containerID strin
 	url := fmt.Sprintf("http://%s:8080/execute", ip)
 
 	payload := map[string]string{
-		"code":     code,
-		"language": language,
+		"code":     cmd,
+		"language": "sh",
 	}
 
 	payloadBytes, _ := json.Marshal(payload)

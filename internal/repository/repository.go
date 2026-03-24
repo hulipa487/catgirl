@@ -300,18 +300,18 @@ func (r *Repository) UpdateRuntimeConfig(ctx context.Context, cfg *config.Runtim
 
 func (r *Repository) CreateSession(ctx context.Context, s *models.Session) error {
 	_, err := r.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, telegram_user_id, name, status, created_at, updated_at, orchestrator_state, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, s.ID, s.TelegramUserID, s.Name, s.Status, s.CreatedAt, s.UpdatedAt, s.OrchestratorState, s.Metadata)
+		INSERT INTO sessions (id, telegram_user_id, bot_token, name, status, created_at, updated_at, orchestrator_state, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, s.ID, s.TelegramUserID, s.BotToken, s.Name, s.Status, s.CreatedAt, s.UpdatedAt, s.OrchestratorState, s.Metadata)
 	return err
 }
 
 func (r *Repository) GetSession(ctx context.Context, id uuid.UUID) (*models.Session, error) {
 	var s models.Session
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT id, telegram_user_id, name, status, created_at, updated_at, orchestrator_state, metadata
+		SELECT id, telegram_user_id, bot_token, name, status, created_at, updated_at, orchestrator_state, metadata
 		FROM sessions WHERE id = $1
-	`, id).Scan(&s.ID, &s.TelegramUserID, &s.Name, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.OrchestratorState, &s.Metadata)
+	`, id).Scan(&s.ID, &s.TelegramUserID, &s.BotToken, &s.Name, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.OrchestratorState, &s.Metadata)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -321,9 +321,9 @@ func (r *Repository) GetSession(ctx context.Context, id uuid.UUID) (*models.Sess
 func (r *Repository) GetSessionByTelegramUser(ctx context.Context, telegramUserID int64) (*models.Session, error) {
 	var s models.Session
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT id, telegram_user_id, name, status, created_at, updated_at, orchestrator_state, metadata
+		SELECT id, telegram_user_id, bot_token, name, status, created_at, updated_at, orchestrator_state, metadata
 		FROM sessions WHERE telegram_user_id = $1 AND status = 'active'
-	`, telegramUserID).Scan(&s.ID, &s.TelegramUserID, &s.Name, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.OrchestratorState, &s.Metadata)
+	`, telegramUserID).Scan(&s.ID, &s.TelegramUserID, &s.BotToken, &s.Name, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.OrchestratorState, &s.Metadata)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -332,15 +332,15 @@ func (r *Repository) GetSessionByTelegramUser(ctx context.Context, telegramUserI
 
 func (r *Repository) UpdateSession(ctx context.Context, s *models.Session) error {
 	_, err := r.db.Pool.Exec(ctx, `
-		UPDATE sessions SET name = $2, status = $3, updated_at = $4, orchestrator_state = $5, metadata = $6
+		UPDATE sessions SET bot_token = $2, name = $3, status = $4, updated_at = $5, orchestrator_state = $6, metadata = $7
 		WHERE id = $1
-	`, s.ID, s.Name, s.Status, time.Now(), s.OrchestratorState, s.Metadata)
+	`, s.ID, s.BotToken, s.Name, s.Status, time.Now(), s.OrchestratorState, s.Metadata)
 	return err
 }
 
 func (r *Repository) ListSessions(ctx context.Context, limit, offset int) ([]*models.Session, error) {
 	rows, err := r.db.Pool.Query(ctx, `
-		SELECT id, telegram_user_id, name, status, created_at, updated_at, orchestrator_state, metadata
+		SELECT id, telegram_user_id, bot_token, name, status, created_at, updated_at, orchestrator_state, metadata
 		FROM sessions ORDER BY created_at DESC LIMIT $1 OFFSET $2
 	`, limit, offset)
 	if err != nil {
@@ -351,7 +351,7 @@ func (r *Repository) ListSessions(ctx context.Context, limit, offset int) ([]*mo
 	var sessions []*models.Session
 	for rows.Next() {
 		var s models.Session
-		if err := rows.Scan(&s.ID, &s.TelegramUserID, &s.Name, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.OrchestratorState, &s.Metadata); err != nil {
+		if err := rows.Scan(&s.ID, &s.TelegramUserID, &s.BotToken, &s.Name, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.OrchestratorState, &s.Metadata); err != nil {
 			return nil, err
 		}
 		sessions = append(sessions, &s)

@@ -9,6 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 CREATE TABLE IF NOT EXISTS sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     telegram_user_id BIGINT NOT NULL,
+    bot_token VARCHAR(255) NOT NULL DEFAULT '',
     name VARCHAR(255),
     status VARCHAR(50) DEFAULT 'active',
     settings JSONB DEFAULT '{}'::jsonb,

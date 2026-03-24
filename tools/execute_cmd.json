@@ -1,0 +1,17 @@
+{
+  "type": "function",
+  "function": {
+    "name": "EXECUTE_CMD",
+    "description": "Execute a command in your worker's dedicated isolated Docker container. Returns the stdout/stderr output. Use this to run commands available inside your container.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "The command to execute"
+        }
+      },
+      "required": ["code"]
+    }
+  }
+}
